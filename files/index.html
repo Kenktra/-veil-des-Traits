@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Éveil des Traits — RPG</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <section id="screen-title" class="screen"></section>
+    <section id="screen-create" class="screen hidden"></section>
+    <section id="screen-game" class="screen hidden">
+      <header id="hud"></header>
+      <div id="layout"><nav id="nav" aria-label="Menu principal"></nav><main id="view"></main></div>
+    </section>
+    <section id="screen-combat" class="screen hidden"></section>
+  </div>
+  <div id="toasts" aria-live="polite"></div>
+  <div id="modal" class="hidden"></div>
+  <div id="tooltip" class="hidden"></div>
+  <noscript>Ce jeu nécessite JavaScript.</noscript>
+  <script src="script.js"></script>
+</body>
+</html>
