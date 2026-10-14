@@ -34,7 +34,7 @@ function wpick(arr, wf) {
 }
 
 /* ---------- 2. DONNÉES ---------- */
-const MAXLVL = 50;
+const MAXLVL = 250;
 const xpNeeded = l => Math.floor(50 * Math.pow(l, 1.75));
 // Réduction de dégâts : dépend du niveau pour rester pertinente à tous les paliers
 const mitig = (def, lvl) => { const K = 60 + lvl * 12; return K / (K + Math.max(0, def)); };
@@ -315,10 +315,11 @@ const Enemies = {
   make(id, lvl, mod) {
     const boss = BOSSES[id], t = boss || ETPL[id], elite = mod === 'elite';
     const hpM = elite ? 1.9 : 1, atkM = elite ? 1.3 : 1, defM = elite ? 1.2 : 1;
-    const maxHp = Math.round(40 * t.hp * (1 + .9 * (lvl - 1)) * hpM);
+    const dm = DIFFICULTY[(typeof G !== 'undefined' && G && G.p && G.p.diff) || 'normal'] || DIFFICULTY.normal;
+    const maxHp = Math.round(40 * t.hp * (1 + .9 * (lvl - 1)) * hpM * dm.hp);
     const e = {
       tpl: id, n: elite ? t.n + ' alpha' : t.n, i: t.i, lvl, maxHp, hp: maxHp,
-      atk: 10 * t.atk * atkM * (1 + .6 * (lvl - 1)), def: 6 * t.def * defM * (1 + .35 * (lvl - 1)), spd: t.spd + lvl * .5,
+      atk: 10 * t.atk * atkM * dm.atk * (1 + .6 * (lvl - 1)), def: 6 * t.def * defM * (1 + .35 * (lvl - 1)), spd: t.spd + lvl * .5,
       res: Object.assign({}, t.res || {}), dodge: t.dodge || 0, skills: [...(t.skills || [])],
       tier: boss ? 'boss' : elite ? 'elite' : 'normal', st: {}, buffAtk: 0, buffT: 0, phase: 0, cyc: 0, cdStun: 0,
       peace: !!t.peace && !elite, mats: t.mats || [], minion: mod === 'minion', dead: false, intent: 'strike', boss: !!boss
@@ -335,6 +336,96 @@ const Enemies = {
   }
 };
 
+/* ---------- 2b. DONNÉES ÉTAPE 2 : classes étendues, origines, difficultés, paliers, Paragon ---------- */
+CLASSES.push(
+  { id: 'chevalier', n: 'Chevalier', i: '🏰', d: 'Armure lourde et contre-attaques disciplinées.', base: { str: 7, int: 2, agi: 3, end: 10 }, grow: { end: 1, str: 1 }, eff: { defPct: .15, hpPct: .08, spdFlat: -2, dodgeFlat: -3 }, pros: ['+15 % défense', '+8 % PV', 'Contre-attaques'], cons: ['−2 vitesse', '−3 % esquive'], sp: 'c_sp', weapons: ['sword', 'spear', 'mace'] },
+  { id: 'berserker', n: 'Berserker', i: '🪓', d: 'Fureur brute : frappe très fort, se protège très mal.', base: { str: 10, int: 1, agi: 5, end: 6 }, grow: { str: 2 }, eff: { atkPct: .12, defPct: -.12, critDmg: .15 }, pros: ['+12 % attaque', '+15 % dégâts critiques'], cons: ['−12 % défense', 'Se blesse en frappant'], sp: 'b_sp', weapons: ['axe', 'greatsword', 'hammer'] },
+  { id: 'voleur', n: 'Voleur', i: '🗝️', d: 'Agile et cupide : dérobe de l’or et trouve plus de butin.', base: { str: 3, int: 3, agi: 10, end: 4 }, grow: { agi: 1, str: 1 }, eff: { goldPct: .15, lootLuck: .15, dodgeFlat: 4, hpPct: -.08 }, pros: ['+15 % or', '+15 % chance de butin', '+4 % esquive'], cons: ['−8 % PV'], sp: 'v_sp', weapons: ['dagger', 'sword', 'crossbow'] },
+  { id: 'chasseur', n: 'Chasseur', i: '🐾', d: 'Pisteur patient : marque sa proie et la traque, surtout les boss.', base: { str: 4, int: 3, agi: 9, end: 5 }, grow: { agi: 1, end: 1 }, eff: { critFlat: 3, precFlat: 15, dmgBossPct: .08 }, pros: ['+15 % précision', '+8 % dégâts contre les boss'], cons: ['Peu de soins'], sp: 'h_sp', weapons: ['bow', 'crossbow', 'spear'] },
+  { id: 'mage_elem', n: 'Mage élémentaire', i: '🌋', d: 'Feu, glace et foudre : exploite les faiblesses ennemies.', base: { str: 2, int: 10, agi: 3, end: 4 }, grow: { int: 2 }, eff: { mpPct: .2, resFire: .15, resIce: .15, resShock: .15, hpPct: -.1 }, pros: ['+20 % mana', '+15 % résistance feu/glace/foudre'], cons: ['−10 % PV'], sp: 'e_sp', weapons: ['staff', 'wand', 'tome'] },
+  { id: 'mage_chaos', n: 'Mage du chaos', i: '🌀', d: 'Puissance instable : dégâts colossaux, au prix de sa propre vie.', base: { str: 1, int: 11, agi: 3, end: 3 }, grow: { int: 2 }, eff: { skillPct: .18, defPct: -.15, hpPct: -.15, critFlat: 5 }, pros: ['+18 % dégâts de compétence', '+5 % critique'], cons: ['−15 % défense', '−15 % PV', 'Sorts qui blessent le lanceur'], sp: 'x_sp', weapons: ['tome', 'wand', 'staff'] },
+  { id: 'invocateur', n: 'Invocateur', i: '🐉', d: 'Il combat par ses familiers et ses créatures invoquées.', base: { str: 2, int: 9, agi: 3, end: 6 }, grow: { int: 1, end: 1 }, eff: { summonPct: .3, mpPct: .15, hpPct: -.05 }, pros: ['+30 % puissance des invocations', '+15 % mana'], cons: ['Fragile seul'], sp: 'i_sp', weapons: ['staff', 'tome', 'wand'] },
+  { id: 'druide', n: 'Druide', i: '🌿', d: 'Régénération, poisons naturels et griffes de la forêt.', base: { str: 3, int: 8, agi: 4, end: 7 }, grow: { int: 1, end: 1 }, eff: { healPct: .15, regenTurn: .02, resPoison: .3, resIce: .1 }, pros: ['Régénère chaque tour', '+15 % soins', 'Résiste au poison'], cons: ['Dégâts modestes'], sp: 'd_sp', weapons: ['staff', 'spear', 'mace'] },
+  { id: 'moine', n: 'Moine', i: '👊', d: 'Poings nus, esprit affûté : rafales rapides et esquive.', base: { str: 7, int: 3, agi: 8, end: 5 }, grow: { agi: 1, str: 1 }, eff: { dodgeFlat: 5, critFlat: 3, spdFlat: 2, defPct: -.05 }, pros: ['+5 % esquive', '+2 vitesse'], cons: ['−5 % défense'], sp: 'o_sp', weapons: ['fist'] },
+  { id: 'samourai', n: 'Samouraï', i: '🗾', d: 'Un seul coup décisif, ou une riposte parfaite.', base: { str: 8, int: 2, agi: 7, end: 5 }, grow: { str: 1, agi: 1 }, eff: { critFlat: 5, critDmg: .2, defPct: -.05 }, pros: ['+20 % dégâts critiques', '+5 % critique'], cons: ['−5 % défense'], sp: 's_sp', weapons: ['katana'] },
+  { id: 'lancier', n: 'Lancier', i: '🔱', d: 'Allonge et perforation : ignore une part de l’armure.', base: { str: 8, int: 2, agi: 6, end: 6 }, grow: { str: 1, agi: 1 }, eff: { spdFlat: 2, penFlat: 15, dodgeFlat: 2 }, pros: ['+15 % pénétration d’armure', '+2 vitesse'], cons: ['Peu de magie'], sp: 'l_sp', weapons: ['spear'] },
+  { id: 'ingenieur', n: 'Ingénieur arcanique', i: '⚙️', d: 'Tourelles, grenades et dispositifs à base de runes.', base: { str: 3, int: 9, agi: 5, end: 5 }, grow: { int: 1, agi: 1 }, eff: { mpPct: .1, skillPct: .1, lootLuck: .1 }, pros: ['+10 % dégâts de compétence', '+10 % butin'], cons: ['Équipement coûteux'], sp: 'q_sp', weapons: ['gun', 'crossbow', 'wand'] },
+  { id: 'barde', n: 'Barde', i: '🎻', d: 'Ses chants renforcent et soignent ; il apprend vite.', base: { str: 3, int: 7, agi: 6, end: 6 }, grow: { int: 1, agi: 1 }, eff: { healPct: .1, xpPct: .05, mpPct: .1, critFlat: 2 }, pros: ['+5 % XP', '+10 % soins', 'Chants de soutien'], cons: ['Dégâts moyens'], sp: 'ba_sp', weapons: ['wand', 'dagger', 'crossbow'] },
+  { id: 'chevalier_noir', n: 'Chevalier noir', i: '🖤', d: 'Classe avancée : se nourrit de la douleur et vole la vie.', base: { str: 9, int: 5, agi: 3, end: 8 }, grow: { str: 1, end: 1 }, eff: { lifesteal: .05, atkPct: .1, hpPct: .05, healPct: -.1 }, pros: ['+5 % vol de vie', '+10 % attaque'], cons: ['−10 % soins reçus'], sp: 'cn_sp', weapons: ['greatsword', 'sword', 'scythe'], adv: { lvl: 25, g: [{ c: 'killsBoss', n: 3, l: 'boss vaincus' }, { c: 'deaths', n: 1, l: 'défaite subie' }] } },
+  { id: 'chronomancien', n: 'Chronomancien', i: '⏳', d: 'Classe avancée : manipule le tempo du combat.', base: { str: 1, int: 11, agi: 6, end: 3 }, grow: { int: 1, agi: 1 }, eff: { spdFlat: 6, mpPct: .15, extraTurn: .05, hpPct: -.1 }, pros: ['+6 vitesse', '5 % de tour supplémentaire'], cons: ['−10 % PV'], sp: 't_sp', weapons: ['wand', 'staff', 'tome'], adv: { lvl: 40, g: [{ c: 'fastWins', n: 15, l: 'victoires en 3 tours ou moins' }, { c: 'bossesDistinct', n: 4, l: 'boss différents vaincus' }] } }
+);
+ITEM_BASES.weapon.push(
+  { n: 'Katana', cat: 'katana', i: '🗡️', main: { atk: 1.25 }, bias: ['crit', 'agi'] },
+  { n: 'Épée à deux mains', cat: 'greatsword', i: '⚔️', main: { atk: 1.45 }, bias: ['str', 'hp'] },
+  { n: 'Gantelets de combat', cat: 'fist', i: '👊', main: { atk: 1.1 }, bias: ['agi', 'spd'] },
+  { n: 'Arquebuse arcanique', cat: 'gun', i: '🔫', main: { atk: 1.3 }, bias: ['int', 'crit'] },
+  { n: 'Marteau de guerre', cat: 'hammer', i: '🔨', main: { atk: 1.4 }, bias: ['str', 'end'] });
+Object.assign(CAT_NAME, { katana: 'Katana', greatsword: 'Épée à deux mains', fist: 'Poings', gun: 'Arme à feu', hammer: 'Marteau' });
+Object.assign(STAT_LABEL, { mres: 'Résistance magique', prec: 'Précision', pen: 'Pénétration' });
+STAT_POOL.push('mres', 'prec', 'pen'); Object.assign(AFF, { mres: .5, prec: .08, pen: .05 });
+TIERS.push([60, 'du Zénith'], [90, 'des Abysses'], [130, 'd’Éternité'], [180, 'de l’Origine'], [230, 'des Cieux']);
+Object.assign(EFFL, {
+  precFlat: ['de précision', 'n%'], penFlat: ['de pénétration d’armure', 'n%'], sresFlat: ['de résistance aux altérations', 'n%'], mresPct: ['de résistance magique', '%'],
+  resFire: ['de résistance au feu', '%'], resIce: ['de résistance à la glace', '%'], resShock: ['de résistance à la foudre', '%'], resPoison: ['de résistance au poison', '%'],
+  resDark: ['de résistance aux ténèbres', '%'], resHoly: ['de résistance au sacré', '%']
+});
+
+const DIFFICULTY = {
+  facile: { n: 'Facile', d: 'Ennemis −20 %, récompenses −15 %.', hp: .8, atk: .8, rew: .85, loss: .10 },
+  normal: { n: 'Normal', d: 'L’expérience prévue.', hp: 1, atk: 1, rew: 1, loss: .15 },
+  difficile: { n: 'Difficile', d: 'Ennemis +25 % PV / +20 % attaque, récompenses +25 %.', hp: 1.25, atk: 1.2, rew: 1.25, loss: .20 },
+  cauchemar: { n: 'Cauchemar', d: 'Ennemis +60 % PV / +50 % attaque, récompenses +60 %, lourde perte d’or à la mort.', hp: 1.6, atk: 1.5, rew: 1.6, loss: .30 }
+};
+const ORIGINS = [
+  { id: 'aldra', n: 'Royaume d’Aldra', i: '🏰', d: 'Terre de la Couronne. +10 réputation Couronne.', rep: { couronne: 10 }, eff: {}, line: '« Un enfant d’Aldra ! Le royaume est fier de vous. »' },
+  { id: 'nord', n: 'Clans du Nord', i: '❄️', d: 'Rudes et fiers. +4 % PV, +15 % résistance à la glace.', rep: {}, eff: { hpPct: .04, resIce: .15 }, line: '« Un fils (ou une fille) des clans… le froid vous a bien forgé. »' },
+  { id: 'zahar', n: 'Cité des Sables de Zahar', i: '🏜️', d: 'Marchands rusés. +8 % or, −3 % prix.', rep: {}, eff: { goldPct: .08, shopDisc: .03 }, line: '« Un Zaharien ! Vous savez marchander, au moins ? »' },
+  { id: 'mirelle', n: 'Îles de Brume de Mirelle', i: '🌫️', d: 'Navigateurs-mages. +10 réputation Cercle, +5 % mana.', rep: { cercle: 10 }, eff: { mpPct: .05 }, line: '« Les Îles de Brume… on dit que leurs mages entendent la mer. »' },
+  { id: 'vorgath', n: 'Marches Noires de Vorgath', i: '🌑', d: 'Terre de bannis. +10 réputation Ombres, +2 % critique.', rep: { ombres: 10 }, eff: { critFlat: 2 }, line: '« Vorgath. Vous avez des yeux de survivant. »' },
+  { id: 'ilvane', n: 'Forêt d’Ilvane', i: '🌳', d: 'Peuple des arbres. +10 réputation Sylve, +2 % PV après combat.', rep: { sylve: 10 }, eff: { regenPost: .02 }, line: '« Les arbres d’Ilvane vous murmurent encore, n’est-ce pas ? »' }
+];
+const BACKGROUNDS = [
+  { id: 'orphelin', n: 'Orphelin des rues', d: '+5 Ombres, +40 or, +2 % esquive.', rep: { ombres: 5 }, gold: 40, eff: { dodgeFlat: 2 } },
+  { id: 'soldat', n: 'Fils de soldat', d: '+5 Couronne, +3 % défense.', rep: { couronne: 5 }, eff: { defPct: .03 } },
+  { id: 'apprenti', n: 'Apprenti du Cercle', d: '+5 Cercle, +1 potion de mana, +4 % mana.', rep: { cercle: 5 }, cons: { potion_mp: 1 }, eff: { mpPct: .04 } },
+  { id: 'chasseur_s', n: 'Chasseur de la Sylve', d: '+5 Sylve, +2 % critique.', rep: { sylve: 5 }, eff: { critFlat: 2 } },
+  { id: 'mercenaire', n: 'Mercenaire en fuite', d: '−5 Couronne, +5 Ombres, +80 or.', rep: { couronne: -5, ombres: 5 }, gold: 80, eff: {} },
+  { id: 'pelerin', n: 'Pèlerin repenti', d: '+10 % soins reçus, +1 potion de soin.', cons: { potion_hp: 1 }, eff: { healPct: .1 } }
+];
+const SEXES = [['m', 'Masculin'], ['f', 'Féminin'], ['x', 'Non précisé']];
+
+/* Paliers de niveau : bonus permanents + récompenses (niv. 10, 25 … 250) */
+const MILESTONES = {
+  10: { n: 'Aventurier confirmé', minR: 2, sp: 1, gold: 300, title: null }, 25: { n: 'Vétéran', minR: 2, sp: 1, gold: 800 }, 50: { n: 'Champion', minR: 3, sp: 2, gold: 2000 },
+  75: { n: 'Maître d’armes', minR: 3, sp: 2, gold: 4000 }, 100: { n: 'Héros du royaume', minR: 4, sp: 2, gold: 8000 }, 125: { n: 'Paragon', minR: 4, sp: 2, gold: 12000 },
+  150: { n: 'Légende', minR: 4, sp: 3, gold: 18000 }, 175: { n: 'Demi-dieu', minR: 5, sp: 3, gold: 26000 }, 200: { n: 'Mythe vivant', minR: 5, sp: 3, gold: 36000 },
+  225: { n: 'Transcendant', minR: 5, sp: 3, gold: 50000 }, 250: { n: 'Apogée', minR: 6, sp: 5, gold: 100000 }
+};
+
+/* Paragon : progression après le niveau 250, sans réinitialisation. Chaque catégorie est plafonnée. */
+const PAR_CAP = 50;
+const PAR_CATS = {
+  atk: ['Puissance', 'atkPct', .003, '+0,3 % attaque'], def: ['Résilience', 'defPct', .003, '+0,3 % défense'], hp: ['Vitalité', 'hpPct', .004, '+0,4 % PV'],
+  crit: ['Précision mortelle', 'critFlat', .1, '+0,1 % critique'], find: ['Flair de reliques', 'lootLuck', .004, '+0,4 % butin rare']
+};
+const Paragon = {
+  need(l) { return Math.round(250000 * (1 + l * .08)); },
+  eff() {
+    const p = G.p.par; if (!p || !p.lvl) return null; const e = {};
+    for (const k in PAR_CATS) { const n = (p.alloc && p.alloc[k]) || 0; if (n) e[PAR_CATS[k][1]] = n * PAR_CATS[k][2]; }
+    return e;
+  },
+  addXp(n) {
+    const p = G.p.par; p.xp += n;
+    while (p.xp >= this.need(p.lvl)) { p.xp -= this.need(p.lvl); p.lvl++; p.pts++; Hooks.toast(`Niveau Paragon ${p.lvl} !`, 'trait'); bump('paragonLevels'); }
+  },
+  spend(k) {
+    const p = G.p.par; if (!PAR_CATS[k] || p.pts <= 0 || (p.alloc[k] || 0) >= PAR_CAP) return false;
+    p.alloc[k] = (p.alloc[k] || 0) + 1; p.pts--; return true;
+  },
+  reset() { const p = G.p.par; let n = 0; for (const k in p.alloc) n += p.alloc[k]; p.pts += n; p.alloc = {}; }
+};
+
 /* ---------- 3. ÉTAT & SAUVEGARDE ---------- */
 // Hooks : points de contact avec l'interface (remplacés dans la partie 10)
 const Hooks = {
@@ -345,9 +436,9 @@ let G = null;
 
 function newState() {
   return {
-    v: 1, created: Date.now(), saved: 0, playTime: 0,
+    v: 2, created: Date.now(), saved: 0, playTime: 0,
     settings: { anim: true },
-    p: { name: '', portrait: 0, cls: 'guerrier', style: 'offensif', lvl: 1, xp: 0, gold: 60, hp: 1, mp: 1, base: { str: 0, int: 0, agi: 0, end: 0 }, pts: 0, sp: 0 },
+    p: { name: '', portrait: 0, cls: 'guerrier', style: 'offensif', lvl: 1, xp: 0, gold: 60, hp: 1, mp: 1, base: { str: 0, int: 0, agi: 0, end: 0 }, pts: 0, sp: 0, sex: 'x', origin: 'aldra', bg: 'orphelin', diff: 'normal', alloc: { str: 0, int: 0, agi: 0, end: 0 }, par: { lvl: 0, xp: 0, pts: 0, alloc: {} }, classChanges: 0 },
     inv: [], eq: {}, cons: { potion_hp: 3, potion_mp: 1 }, mats: {},
     tr: {}, sk: {}, aug: {}, q: {}, comp: {}, active: null,
     zones: {}, bosses: {}, dung: {}, ach: {}, titles: { recrue: true }, title: 'recrue',
@@ -379,7 +470,7 @@ function val(k) {
 }
 
 const Save = {
-  KEY: 'eveil_traits_save', VER: 1,
+  KEY: 'eveil_traits_save', VER: 2,
   exists() { try { return !!localStorage.getItem(this.KEY); } catch (e) { return false; } },
   peek() { try { const d = JSON.parse(localStorage.getItem(this.KEY)); return d && d.p ? d : null; } catch (e) { return null; } },
   read() {
@@ -394,7 +485,12 @@ const Save = {
   // Fusionne avec un état neuf : les champs manquants (anciennes versions) sont comblés
   migrate(d) {
     if (!d || typeof d !== 'object' || !d.p || !d.p.base) throw new Error('format');
-    const m = deepMerge(newState(), d); m.v = this.VER; return m;
+    const old = d.v || 1, m = deepMerge(newState(), d);
+    if (old < 2) { // v1 -> v2 : on reconstitue les points répartis à la main
+      const cl = CLASS(m.p.cls); m.p.alloc = {};
+      for (const k of ['str', 'int', 'agi', 'end']) m.p.alloc[k] = Math.max(0, m.p.base[k] - cl.base[k] - ((cl.grow[k] || 0) * (m.p.lvl - 1)));
+    }
+    m.v = this.VER; return m;
   },
   save() {
     if (!G) return false;
@@ -413,6 +509,9 @@ const Stats = {
     const L = [], cl = CLASS(G.p.cls), st = STYLE(G.p.style);
     L.push({ src: 'Classe · ' + cl.n, eff: cl.eff });
     L.push({ src: 'Style · ' + st.n, eff: st.eff });
+    const og = ORIGINS.find(o => o.id === G.p.origin), bg = BACKGROUNDS.find(b => b.id === G.p.bg);
+    if (og) L.push({ src: 'Origine · ' + og.n, eff: og.eff || {} }); if (bg) L.push({ src: 'Histoire · ' + bg.n, eff: bg.eff || {} });
+    const pe = Paragon.eff(); if (pe) L.push({ src: 'Paragon ' + G.p.par.lvl, eff: pe });
     for (const t of TRAITS) if (G.tr[t.id] && G.tr[t.id].u) L.push({ src: 'Trait · ' + t.n, eff: t.eff });
     for (const s of SYNERGIES) if (s.ids.every(id => Traits.has(id))) L.push({ src: 'Synergie · ' + s.n, eff: s.eff });
     const ti = TITLES.find(t => t.id === G.title); if (ti && ti.eff) L.push({ src: 'Titre · ' + ti.n, eff: ti.eff });
@@ -444,7 +543,13 @@ const Stats = {
       def: Math.max(0, (end * .9 + str * .2 + g('def')) * (1 + e('defPct') + all)),
       spd: Math.max(1, 5 + agi * .5 + g('spd') + e('spdFlat')),
       crit: clamp(5 + agi * .25 + g('crit') + e('critFlat'), 0, 80),
-      dodge: clamp(3 + agi * .2 + g('dodge') + e('dodgeFlat'), 0, 50)
+      dodge: clamp(3 + agi * .2 + g('dodge') + e('dodgeFlat'), 0, 50),
+      mres: Math.max(0, (int * .9 + end * .3 + g('mres')) * (1 + e('mresPct') + all)),
+      prec: clamp(agi * .1 + g('prec') + e('precFlat'), 0, 60),
+      pen: clamp(g('pen') + e('penFlat'), 0, 50),
+      critDmg: 160 + e('critDmg') * 100,
+      lifesteal: e('lifesteal') * 100, regen: e('regenTurn') * 100,
+      sres: clamp(end * .4 + e('sresFlat'), 0, 60), find: e('lootLuck') * 100, healPow: e('healPct') * 100
     };
   },
   get() { return this.calc(true, true); },
@@ -507,24 +612,32 @@ const Mats = {
 
 const Player = {
   addXp(n) {
-    n = Math.round(n); if (n <= 0 || G.p.lvl >= MAXLVL) return 0;
+    n = Math.round(n); if (n <= 0) return 0;
+    if (G.p.lvl >= MAXLVL) { Paragon.addXp(n); return 0; } // niveau max : l'XP alimente le Paragon
     G.p.xp += n; let ups = 0;
     while (G.p.lvl < MAXLVL && G.p.xp >= xpNeeded(G.p.lvl)) { G.p.xp -= xpNeeded(G.p.lvl); G.p.lvl++; ups++; this.levelUp(); }
     if (G.p.lvl >= MAXLVL) G.p.xp = 0;
     return ups;
   },
   levelUp() {
-    const cl = CLASS(G.p.cls);
+    const cl = CLASS(G.p.cls), l = G.p.lvl;
     for (const k in cl.grow) G.p.base[k] += cl.grow[k];
-    G.p.pts += 3; G.p.sp += 1; G.p.gold += G.p.lvl * 10;
+    G.p.pts += 3; G.p.sp += 1; G.p.gold += l * 10;
+    const ms = MILESTONES[l];
+    if (ms) { // palier : bonus permanents + récompenses
+      for (const k of ['str', 'int', 'agi', 'end']) { G.p.base[k] += 2; G.p.alloc[k] = (G.p.alloc[k] || 0) + 0; }
+      G.p.sp += ms.sp; Player.gold(ms.gold, 'neutral'); bump('milestones');
+      const it = genItem({ ilvl: l, r: ms.minR }); Inv.add(it, 'quest');
+      Hooks.toast(`Palier ${l} — ${ms.n} : +2 à toutes les caractéristiques, +${ms.sp} point(s) de compétence, ${fmt(ms.gold)} or, ${it.name}`, 'trait');
+    }
     const S = Stats.get(); G.p.hp = S.maxHp; G.p.mp = S.maxMp;
-    Hooks.levelUp(G.p.lvl);
+    Hooks.levelUp(l);
   },
   heal(n) { const S = Stats.get(), b = G.p.hp; G.p.hp = clamp(G.p.hp + Math.round(n), 0, S.maxHp); return G.p.hp - b; },
   restoreMp(n) { const S = Stats.get(), b = G.p.mp; G.p.mp = clamp(G.p.mp + Math.round(n), 0, S.maxMp); return G.p.mp - b; },
   spend(stat) {
     if (G.p.pts <= 0 || !(stat in G.p.base)) return false;
-    G.p.base[stat]++; G.p.pts--; return true;
+    G.p.base[stat]++; G.p.alloc[stat] = (G.p.alloc[stat] || 0) + 1; G.p.pts--; bump('spent'); return true;
   },
   gold(n, src) { G.p.gold += n; if (n > 0 && src !== 'neutral') bump('goldEarned', n); }
 };
@@ -547,7 +660,7 @@ const Inv = {
     if (G.flags.inCombat) return;
     const it = G.inv.find(x => x.id === id); if (!it) return;
     let slot = it.slot; if (slot === 'acc') slot = !G.eq.acc1 ? 'acc1' : !G.eq.acc2 ? 'acc2' : 'acc1';
-    const old = G.eq[slot]; this.remove(id); G.eq[slot] = it; if (old) G.inv.push(old);
+    const old = G.eq[slot]; this.remove(id); G.eq[slot] = it; if (old) G.inv.push(old); bump('equips');
     Game.sync();
   },
   unequip(slot) {
@@ -608,6 +721,7 @@ const TRAITS = [
   T('bras_couronne', 'Bras armé de la Couronne', 'social', 2, 'Le royaume vous tient pour un champion.', [{ c: 'rep_couronne', n: 150, l: 'réputation auprès de la Couronne' }], { defPct: .06, shopDisc: .05 }),
   T('frere_armes', 'Frère d’armes', 'social', 2, 'Un lien solide vous unit à votre compagnon.', [{ c: 'maxBond', n: 50, l: 'lien avec un compagnon' }], { companionPct: .25 }),
   T('bon_coeur', 'Bon cœur', 'social', 1, 'La bonté vous vaut des soins plus efficaces.', [{ c: 'kind', n: 5, l: 'choix altruistes' }], { healPct: .15, xpPct: .03 }),
+  T('racines', 'Fidèle à ses origines', 'social', 1, 'Votre passé vous rattrape — et vous sert.', [{ c: 'originEv', n: 2, l: 'événements liés à votre origine ou votre histoire' }], { xpPct: .03, healPct: .05 }),
   T('heros', 'Héros du royaume', 'social', 2, 'Votre nom circule dans les tavernes.', [{ c: 'questsDone', n: 12, l: 'quêtes accomplies' }], { xpPct: .05, goldPct: .05 }),
 
   T('funambule', 'Funambule des deux mondes', 'secret', 4, 'Jour ou nuit, le monde plie sous vos pas.', [{ c: 'dayKills', n: 30, l: 'victimes en zone diurne' }, { c: 'nightKills', n: 30, l: 'victimes en zone nocturne' }, { c: 'hiddenChests', n: 3, l: 'coffres cachés' }], { critFlat: 4, atkPct: .06, dodgeFlat: 4 }, { hidden: true, hint: 'Un équilibre entre lumière et ténèbres…' }),
@@ -666,6 +780,12 @@ const TITLES = [
   { id: 'ressuscite', n: 'Le Ressuscité', d: 'Secret.', secret: true, g: [{ c: 'deaths', n: 3, l: 'défaites' }, { c: 'battlesWon', n: 50, l: 'victoires' }], eff: { deathMit: .25 } },
   { id: 'chanceux', n: 'Chanceux absolu', d: 'Secret.', secret: true, g: [{ c: 'secretFound', n: 1, l: 'objet Secret trouvé' }], eff: { lootLuck: .2 } },
   { id: 'eveille_t', n: 'Éveillé', d: 'Secret.', secret: true, g: [{ c: 'trait_eveil', n: 1, l: 'trait Éveillé' }], eff: { xpPct: .05, allPct: .03 } },
+  { id: 'veteran_t', n: 'Vétéran', d: 'Atteindre le niveau 25.', g: [{ c: 'level', n: 25, l: 'niveau' }], eff: { hpPct: .02 } },
+  { id: 'champion_t', n: 'Champion', d: 'Atteindre le niveau 50.', g: [{ c: 'level', n: 50, l: 'niveau' }], eff: { atkPct: .02, defPct: .02 } },
+  { id: 'heros_t', n: 'Héros du royaume', d: 'Atteindre le niveau 100.', g: [{ c: 'level', n: 100, l: 'niveau' }], eff: { hpPct: .03, xpPct: .03 } },
+  { id: 'legende_t', n: 'Légende', d: 'Atteindre le niveau 150.', g: [{ c: 'level', n: 150, l: 'niveau' }], eff: { atkPct: .03, critFlat: 2 } },
+  { id: 'mythe_t', n: 'Mythe vivant', d: 'Atteindre le niveau 200.', g: [{ c: 'level', n: 200, l: 'niveau' }], eff: { allPct: .02, lootLuck: .05 } },
+  { id: 'apogee_t', n: 'Apogée', d: 'Atteindre le niveau 250.', g: [{ c: 'level', n: 250, l: 'niveau' }], eff: { allPct: .03, dmgBossPct: .05 } },
   { id: 'parangon', n: 'Parangon pacifique', d: 'Secret.', secret: true, g: [{ c: 'pacified', n: 15, l: 'rencontres pacifiées' }], eff: { peaceBonus: .3, healPct: .1 } }
 ];
 const Titles = {
@@ -752,7 +872,7 @@ const Quests = {
     if (s.s === 'done') return 'done';
     return this.cur(q) >= q.obj.n ? 'ready' : 'active';
   },
-  accept(id) { const q = QUEST(id); if (!q || this.status(q) !== 'avail') return; this.store(q)[id] = { s: 'active', b: q.abs ? 0 : val(q.obj.c) }; Game.sync(); },
+  accept(id) { const q = QUEST(id); if (!q || this.status(q) !== 'avail') return; this.store(q)[id] = { s: 'active', b: q.abs ? 0 : val(q.obj.c) }; bump('qAccepted'); Game.sync(); },
   claim(id, choice) {
     const q = QUEST(id); if (!q || this.status(q) !== 'ready') return null;
     if (q.choices && choice === undefined) return null;
@@ -764,17 +884,51 @@ const Quests = {
 };
 
 /* ---------- Boucle de jeu ---------- */
+/* Tutoriel interactif : chaque étape est validée automatiquement par les compteurs du jeu */
+const TUTORIAL = [
+  ['Explorer une zone', 'Onglet Explorer › « Explorer la zone ».', 'explorations', 1], ['Remporter un combat', 'Combattez lors d’une rencontre.', 'battlesWon', 1],
+  ['Vous défendre', 'En combat, « Défendre » réduit les dégâts (surtout face aux attaques ⚠).', 'defends', 1], ['Utiliser une compétence', 'En combat › Compétences.', 'skillsUsed', 1],
+  ['Équiper un objet', 'Onglet Inventaire › Équiper.', 'equips', 1], ['Répartir un point', 'Onglet Héros › bouton +.', 'spent', 1],
+  ['Consulter les traits', 'Ouvrez l’onglet Traits : vos actes les éveillent.', 'seenTraits', 1], ['Accepter une quête', 'Onglet Quêtes › Accepter.', 'qAccepted', 1]
+];
+const Tutorial = {
+  done() { return TUTORIAL.filter(t => val(t[2]) >= t[3]).length; },
+  check() {
+    if (G.flags.tutDone || this.done() < TUTORIAL.length) return;
+    G.flags.tutDone = true; const l = Game.reward({ gold: 100, cons: { potion_hp: 3, potion_mp: 2 }, xp: 50 });
+    Hooks.toast('🎓 Tutoriel terminé : ' + l.join(' · '), 'trait');
+  }
+};
 const Game = {
   create(o) {
     G = newState();
-    const cl = CLASS(o.cls);
+    const cl = CLASS(o.cls), og = ORIGINS.find(x => x.id === o.origin) || ORIGINS[0], bg = BACKGROUNDS.find(x => x.id === o.bg) || BACKGROUNDS[0];
     G.p.name = o.name.trim().slice(0, 20); G.p.portrait = o.portrait; G.p.cls = o.cls; G.p.style = o.style;
+    G.p.sex = o.sex || 'x'; G.p.origin = og.id; G.p.bg = bg.id; G.p.diff = DIFFICULTY[o.diff] ? o.diff : 'normal';
     G.p.base = Object.assign({ str: 0, int: 0, agi: 0, end: 0 }, cl.base); G.p.sp = 2; G.sk[cl.sp] = 1;
+    for (const f in og.rep || {}) addRep(f, og.rep[f]);
+    for (const f in bg.rep || {}) addRep(f, bg.rep[f]);
+    if (bg.gold) G.p.gold += bg.gold;
+    for (const k in bg.cons || {}) G.cons[k] = (G.cons[k] || 0) + bg.cons[k];
     const wc = cl.weapons[o.weapon] || cl.weapons[0];
     const w = genItem({ ilvl: 1, r: 0, slot: 'weapon', cat: wc }); w.name = `${CAT_NAME[wc]} d’apprenti`; G.eq.weapon = w;
     const arm = genItem({ ilvl: 1, r: 0, slot: 'chest' }); arm.name = 'Tunique de voyage'; G.eq.chest = arm;
     const S = Stats.get(); G.p.hp = S.maxHp; G.p.mp = S.maxMp;
     Daily.ensure(); Shop.refresh(); Save.save();
+  },
+  // Changement de classe : conserve niveau, points répartis, palier et équipement ; rembourse les compétences de l'ancienne classe
+  classChangeCost() { return Math.round(G.p.lvl * 150 * (1 + G.p.classChanges * .5)); },
+  classUnlocked(c) { return !c.adv || (G.p.lvl >= c.adv.lvl && c.adv.g.every(g => val(g.c) >= g.n)); },
+  changeClass(id) {
+    const c = CLASSES.find(x => x.id === id); if (!c || c.id === G.p.cls || G.flags.inCombat) return false;
+    if (G.p.lvl < 10 || !this.classUnlocked(c) || G.p.gold < this.classChangeCost()) return false;
+    G.p.gold -= this.classChangeCost(); G.p.classChanges++;
+    const old = CLASS(G.p.cls); let refund = 0;
+    for (const sid of Object.keys(G.sk)) { const d = SK[sid]; if (d && d.cls === old.id) { refund += d.special ? G.sk[sid] - 1 : G.sk[sid]; delete G.sk[sid]; delete G.aug[sid]; } }
+    G.p.sp += refund; G.p.cls = c.id; G.sk[c.sp] = 1;
+    const msN = Object.keys(MILESTONES).filter(l => +l <= G.p.lvl).length;
+    for (const k of ['str', 'int', 'agi', 'end']) G.p.base[k] = c.base[k] + (c.grow[k] || 0) * (G.p.lvl - 1) + (G.p.alloc[k] || 0) + msN * 2;
+    bump('classChanges'); Stats.clamp(); Game.sync(); return true;
   },
   load() {
     const d = Save.read(); if (!d) return false;
@@ -800,7 +954,7 @@ const Game = {
   },
   sync() {
     if (!G) return;
-    Daily.ensure(); Traits.check(); Titles.check(); Achv.check(); Shop.maybeRefresh(); Stats.clamp();
+    Daily.ensure(); Traits.check(); Titles.check(); Achv.check(); Tutorial.check(); Shop.maybeRefresh(); Stats.clamp();
     Save.save(); Hooks.render();
   }
 };
@@ -950,6 +1104,8 @@ const Combat = {
     C.defending = false;
     for (const k in C.cd) if (C.cd[k] > 0) C.cd[k]--;
     C.buffs = C.buffs.filter(b => --b.t > 0);
+    if (C.counter && --C.counter.t <= 0) C.counter = null;
+    const rg = this.buff('regen'); if (rg) { const h = Player.heal(S.maxHp * rg * (1 + (E.healPct || 0))); if (h) { this.log(`🌸 Régénération : +${h} PV.`, 'good'); this.fx('p', 0, '+' + h, 'heal'); } }
     if (C.shieldT > 0 && --C.shieldT === 0) C.shield = 0;
     if (E.mpRegen) Player.restoreMp(E.mpRegen);
     if (E.regenTurn) { const h = Player.heal(S.maxHp * E.regenTurn); if (h) this.fx('p', 0, '+' + h, 'heal'); }
@@ -980,7 +1136,7 @@ const Combat = {
   },
   inflict(st, e) { // altération infligée au joueur
     const [id, ch, t] = st, S = Stats.get(), sd = STATUS[id], C = this.C;
-    if (!chance(ch * (1 - clamp(S.end * .004, 0, .5)))) return;
+    if (!chance(ch * (1 - S.sres / 100))) return;
     const cur = C.st[id]; C.st[id] = { t: Math.max(t, cur ? cur.t : 0), pow: Math.max(1, e.atk * .22) };
     this.log(`${sd.i} Vous subissez ${sd.n} !`, 'status');
     C.maxSt = Math.max(C.maxSt, Object.keys(C.st).length);
@@ -1010,8 +1166,10 @@ const Combat = {
     const sk = ESK[e.intent] || ESK.strike, S = Stats.get(), E = Stats.sum();
     if (sk.buff) { e.buffAtk = sk.buff; e.buffT = 3; this.log(`📣 ${e.n} : ${sk.n} — son attaque augmente !`, 'warn'); return; }
     if (sk.healSelf) { const h = Math.round(e.maxHp * sk.healSelf); e.hp = Math.min(e.maxHp, e.hp + h); this.log(`💚 ${e.n} se régénère (+${h}).`); this.fx('e', C.enemies.indexOf(e), '+' + h, 'heal'); return; }
-    const defV = S.def * (1 + this.buff('def'));
+    const magic = !!(sk.el && sk.el !== 'phys');
+    const defV = (magic ? S.mres : S.def) * (1 + this.buff('def'));
     let raw = e.atk * (1 + e.buffAtk) * sk.m * rnd(.9, 1.1) * mitig(defV, S.lvl);
+    if (magic) raw *= 1 - clamp(E['res' + sk.el.charAt(0).toUpperCase() + sk.el.slice(1)] || 0, -.5, .75);
     const dodge = clamp((S.dodge + this.buff('dodge') * 100) / 100, 0, .6);
     if (chance(dodge)) { bump('dodges'); this.log(`💨 Vous esquivez ${sk.n} de ${e.n} !`, 'good'); this.fx('p', 0, 'Esquive', 'miss'); return; }
     if (chance(.05)) raw *= 1.5;
@@ -1024,6 +1182,7 @@ const Combat = {
     if (sk.mpDrain) { const l = Player.restoreMp(-Math.round(S.maxMp * sk.mpDrain)); if (l) this.log(`🔻 ${e.n} aspire votre mana.`); }
     if (dealt > 0 || sk.m < 1) { if (sk.st) this.inflict(sk.st, e); if (sk.st2) this.inflict(sk.st2, e); }
     if (E.thorns && dealt > 0 && !e.dead) { const t = Math.max(1, Math.round(dealt * E.thorns)); this.log(`🌵 Épines : ${t} dégâts renvoyés.`); this.hurtEnemy(e, t, { by: 'thorns' }); }
+    if (C.counter && dealt > 0 && !e.dead && !C.over) { bump('counters'); this.log('↩ Contre-attaque !', 'good'); this.strike(e, C.counter.m, {}); }
   },
   estimate(e) {
     const sk = ESK[e.intent] || ESK.strike; if (sk.m === undefined) return 0;
@@ -1041,11 +1200,11 @@ const Combat = {
     const C = this.C, S = Stats.get(), E = Stats.sum();
     if (!e || e.dead) return 0;
     const type = o.t || this.wtype();
-    if (e.dodge && !o.sure && chance(e.dodge / 100)) { this.log(`💨 ${e.n} esquive !`); this.fx('e', C.enemies.indexOf(e), 'Raté', 'miss'); return 0; }
+    if (e.dodge && !o.sure && chance(Math.max(0, e.dodge - S.prec) / 100)) { this.log(`💨 ${e.n} esquive !`); this.fx('e', C.enemies.indexOf(e), 'Raté', 'miss'); return 0; }
     let raw = (type === 'mag' ? S.mag : S.atk) * m * rnd(.9, 1.1);
     let bonus = this.buff('atk') + (o.skill ? (E.skillPct || 0) : 0) + (e.boss ? (E.dmgBossPct || 0) : 0) + (e.mark ? e.mark.v : 0);
     if (ZONE(C.ctx.zone) && ZONE(C.ctx.zone).night) bonus += E.nightAtk || 0;
-    raw *= (1 + bonus) * mitig(e.def, e.lvl) * (1 - clamp(e.res[o.el || 'phys'] || 0, -1, .9));
+    raw *= (1 + bonus) * mitig(e.def * (1 - S.pen / 100), e.lvl) * (1 - clamp(e.res[o.el || 'phys'] || 0, -1, .9));
     const crit = o.crit || chance((S.crit + (o.critBonus || 0) + this.buff('crit')) / 100);
     if (crit) { raw *= 1.6 + (E.critDmg || 0); bump('crits'); }
     const dmg = this.hurtEnemy(e, raw, { crit, by: 'player' });
@@ -1115,6 +1274,7 @@ const Combat = {
   finishAction() {
     const C = this.C; if (this.checkEnd()) { Hooks.combatRender(); return; }
     this.allyPhase(); if (this.checkEnd()) { Hooks.combatRender(); return; }
+    if (C.forceExtra) { C.forceExtra = false; C.extra = true; Hooks.combatRender(); return; }
     const E = Stats.sum();
     if (!C.extra && chance(E.extraTurn || 0)) { C.extra = true; this.log('⚡ Tour supplémentaire !', 'good'); Hooks.combatRender(); return; }
     C.extra = false; C.idx++; this.run();
@@ -1137,11 +1297,13 @@ const Combat = {
     switch (f.k) {
       case 'dmg': {
         const targets = f.aoe ? [...this.alive] : [this.tgt()]; let dealt = 0, m = f.m;
+        if (f.selfDmg) { G.p.hp = Math.max(1, G.p.hp - Math.round(S.maxHp * f.selfDmg)); this.log(`💢 Le sort vous blesse (−${pc(f.selfDmg)} % PV).`, 'bad'); this.fx('p', 0, 'Sacrifice', 'dmg'); }
         if (f.corpse) m = f.m + f.per * Math.min(C.corpses, 8);
         for (const e of targets) for (let h = 0; h < (f.hits || 1); h++) {
           if (e.dead) break; let mm = m * pm; if (f.exec && e.hp / e.maxHp < .4) mm *= 1 + f.exec;
           dealt += this.strike(e, mm, { t: f.t, el: f.el, skill: true, critBonus: f.cb, st: f.st, st2: f.st2 });
         }
+        if (f.steal && dealt > 0) { const g = Math.round(S.lvl * rint(3, 8) * (1 + (E.goldPct || 0))); Player.gold(g); this.log(`💰 Vous dérobez ${g} or !`, 'good'); }
         if (f.hd && dealt > 0) { const h = Player.heal(dealt * f.hd * (1 + (E.healPct || 0))); if (h) { this.log(`💚 Vous récupérez ${h} PV.`, 'good'); this.fx('p', 0, '+' + h, 'heal'); } }
         if (f.hs) { const h = Player.heal(S.maxHp * f.hs * (1 + (E.healPct || 0))); if (h) { this.log(`💚 +${h} PV.`, 'good'); this.fx('p', 0, '+' + h, 'heal'); } }
         break;
@@ -1163,6 +1325,8 @@ const Combat = {
       case 'focus': {
         const m = Player.restoreMp(S.maxMp * f.mpf * pm); C.buffs.push({ k: 'crit', v: 100, t: 2 }); this.log(`🧘 Concentration : +${m} mana, prochaine attaque critique.`, 'good'); break;
       }
+      case 'counter': { C.counter = { m: f.m * pm, t: f.t + 1 }; this.log(`↩ Posture de riposte (${f.t} tours).`, 'good'); break; }
+      case 'extra': { Player.restoreMp(S.maxMp * (f.mpf || 0)); C.forceExtra = true; this.log('⏱ Le temps se fige : vous rejouez !', 'good'); break; }
       case 'mark': { const e = this.tgt(); e.mark = { v: f.v * pm, t: f.t + 1 }; this.log(`🎯 ${e.n} est marqué (+${pc(f.v * pm)} % de dégâts subis).`, 'good'); break; }
     }
     this.finishAction();
@@ -1198,7 +1362,7 @@ const Combat = {
   /* --- Fin de combat --- */
   win() {
     const C = this.C; if (C.over) return; C.over = true; C.res = 'win';
-    const S = Stats.get(), E = Stats.sum(), z = ZONE(C.ctx.zone), rm = C.ctx.rewMul || 1;
+    const S = Stats.get(), E = Stats.sum(), z = ZONE(C.ctx.zone), rm = (C.ctx.rewMul || 1) * (DIFFICULTY[G.p.diff || 'normal'] || DIFFICULTY.normal).rew;
     let xp = 0, gold = 0; const items = [], mats = {}, cons = {}; let unique = null;
     for (const e of C.enemies) {
       if (e.minion) continue;
@@ -1233,7 +1397,7 @@ const Combat = {
   lose() {
     const C = this.C; if (C.over) return; C.over = true; C.res = 'lose';
     const E = Stats.sum(), S = Stats.get(); bump('deaths'); G.c.streak = 0;
-    const loss = Math.floor(G.p.gold * .15 * (1 - clamp(E.deathMit || 0, 0, 1)));
+    const loss = Math.floor(G.p.gold * (DIFFICULTY[G.p.diff || 'normal'] || DIFFICULTY.normal).loss * (1 - clamp(E.deathMit || 0, 0, 1)));
     G.p.gold -= loss; G.p.hp = Math.max(1, Math.round(S.maxHp * (.35 + (E.deathMit ? .15 : 0)))); G.p.mp = Math.round(S.maxMp * .5);
     G.flags.inCombat = false; G.flags.dungeon = null; this.log('☠ Vous êtes vaincu…', 'bad');
     C.summary = { res: 'lose', gold: -loss };
@@ -1242,6 +1406,139 @@ const Combat = {
   // Appelé par l'interface quand le joueur ferme l'écran de résultat
   finish() { const C = this.C; if (!C) return; const cb = C.ctx.onEnd; this.C = null; if (cb) cb(C.res); }
 };
+
+/* ---------- 6b. COMPÉTENCES DES CLASSES ÉTENDUES ----------
+   Chaque classe : 1 spéciale + 3 actives + 2 passives. Nouveaux effets : counter (riposte), extra (tour bonus),
+   steal (vole de l'or), selfDmg (sacrifice de PV), buff « regen » (soin sur la durée). */
+function cls6(cls, pre, o) {
+  const A = (suf, a, tier, req, extra) => Object.assign({ id: pre + suf, n: a[0], ico: a[1], type: 'active', tier, mp: a[2], cd: a[3], d: a[4], fx: a[5], req }, extra);
+  const P = (suf, a, tier, req) => ({ id: pre + suf, n: a[0], ico: a[1], type: 'passive', tier, d: a[2], eff: a[3], req });
+  defSk(cls, [
+    A('_sp', o.sp, 0, { lvl: 1 }, { special: true }), A('1', o.a1, 1, { lvl: 1 }), P('2', o.p1, 1, { lvl: 1 }),
+    A('3', o.a2, 2, { lvl: 5, p: pre + '1' }), P('4', o.p2, 2, { lvl: 6, p: pre + '2' }),
+    A('5', o.a3, 3, { lvl: 12, p: pre + '3', c: o.c })
+  ]);
+}
+cls6('chevalier', 'c', {
+  sp: ['Posture de contre', '🛡️', 10, 4, 'Pendant 3 tours, riposte à 120 % à chaque coup reçu.', { k: 'counter', m: 1.2, t: 3 }],
+  a1: ['Coup de bouclier', '🛡️', 8, 0, 'Frappe (130 %), 40 % d’étourdir.', { k: 'dmg', t: 'phys', m: 1.3, st: ['stun', .4, 1] }],
+  p1: ['Armure de plates', '🧱', '+7 % défense, −1 % dégâts subis par rang.', { defPct: .07, dmgTakenPct: -.01 }],
+  a2: ['Serment de fer', '⚜️', 14, 4, 'Défense +40 % pendant 3 tours, soigne 10 % des PV.', { k: 'buff', b: { def: .4 }, t: 3, hs: .1 }],
+  p2: ['Bastion', '🏯', '+5 % PV, +5 % d’efficacité de la défense par rang.', { hpPct: .05, defendBonus: .05 }],
+  a3: ['Jugement du rempart', '⚖️', 24, 3, 'Coup titanesque (230 %), soigne 12 % des PV.', { k: 'dmg', t: 'phys', m: 2.3, hs: .12 }], c: ['defends', 20, 'défenses']
+});
+cls6('berserker', 'b', {
+  sp: ['Rage sanglante', '🩸', 10, 4, 'Attaque +50 % mais défense −20 % pendant 3 tours.', { k: 'buff', b: { atk: .5, def: -.2 }, t: 3 }],
+  a1: ['Hache furieuse', '🪓', 6, 0, 'Frappe (180 %), vous coûte 5 % de vos PV.', { k: 'dmg', t: 'phys', m: 1.8, selfDmg: .05 }],
+  p1: ['Soif de sang', '🩸', '+2 % vol de vie, +2 % attaque par rang.', { lifesteal: .02, atkPct: .02 }],
+  a2: ['Cyclone de lames', '🌪️', 16, 2, 'Frappe tous les ennemis (130 %), 40 % de saignement.', { k: 'dmg', t: 'phys', m: 1.3, aoe: true, st: ['bleed', .4, 3] }],
+  p2: ['Peau de bête', '🐗', '+5 % PV, +10 % dégâts critiques par rang.', { hpPct: .05, critDmg: .1 }],
+  a3: ['Fracasse-crâne', '💀', 24, 3, 'Coup brutal (300 %), +40 % sous 40 % PV, 50 % d’étourdir.', { k: 'dmg', t: 'phys', m: 3.0, exec: .4, st: ['stun', .5, 1] }], c: ['kills', 60, 'ennemis vaincus']
+});
+cls6('voleur', 'v', {
+  sp: ['Vol à la tire', '💰', 8, 3, 'Frappe (100 %) et dérobe de l’or.', { k: 'dmg', t: 'phys', m: 1.0, steal: true }],
+  a1: ['Coup bas', '🗡️', 8, 0, 'Frappe (150 %), +25 % critique, saignement.', { k: 'dmg', t: 'phys', m: 1.5, cb: 25, st: ['bleed', .5, 3] }],
+  p1: ['Doigts agiles', '🤏', '+4 % butin rare et +4 % or par rang.', { lootLuck: .04, goldPct: .04 }],
+  a2: ['Poussière aveuglante', '🌫️', 10, 3, 'La cible subit +30 % de dégâts pendant 3 tours.', { k: 'mark', v: .3, t: 3 }],
+  p2: ['Esquive acrobatique', '🤸', '+2 % esquive, +1 vitesse par rang.', { dodgeFlat: 2, spdFlat: 1 }],
+  a3: ['Mille lames', '✨', 26, 3, '5 coups rapides (5 × 70 %).', { k: 'dmg', t: 'phys', m: .7, hits: 5 }], c: ['dodges', 60, 'esquives']
+});
+cls6('chasseur', 'h', {
+  sp: ['Marque du chasseur', '🎯', 6, 4, 'La cible subit +35 % de dégâts pendant 4 tours.', { k: 'mark', v: .35, t: 4 }],
+  a1: ['Piège à loup', '🪤', 10, 2, 'Frappe (120 %), 50 % d’étourdir.', { k: 'dmg', t: 'phys', m: 1.2, st: ['stun', .5, 1] }],
+  p1: ['Pisteur', '👣', '+4 % précision, +1 % critique par rang.', { precFlat: 4, critFlat: 1 }],
+  a2: ['Flèche perforante', '➶', 14, 1, 'Tir puissant (200 %).', { k: 'dmg', t: 'phys', m: 2.0 }],
+  p2: ['Instinct de traque', '🐺', '+4 % dégâts contre les boss, +2 % XP par rang.', { dmgBossPct: .04, xpPct: .02 }],
+  a3: ['Salve du prédateur', '🏹', 28, 3, 'Volée sur tous les ennemis (160 %), saignement.', { k: 'dmg', t: 'phys', m: 1.6, aoe: true, st: ['bleed', .5, 3] }], c: ['killsElite', 5, 'élites vaincus']
+});
+cls6('mage_elem', 'e', {
+  sp: ['Tempête élémentaire', '⛈️', 20, 3, 'Foudre sur tous les ennemis (2 × 120 %), 20 % d’étourdir.', { k: 'dmg', t: 'mag', m: 1.2, hits: 2, aoe: true, el: 'shock', st: ['stun', .2, 1] }],
+  a1: ['Lance de glace', '❄️', 10, 0, 'Glace (170 %), 30 % de gel.', { k: 'dmg', t: 'mag', m: 1.7, el: 'ice', st: ['freeze', .3, 1] }],
+  p1: ['Affinité élémentaire', '🔥', '+4 % dégâts de compétence, +5 % résistance feu et glace par rang.', { skillPct: .04, resFire: .05, resIce: .05 }],
+  a2: ['Mur de flammes', '🔥', 14, 2, 'Brûle tous les ennemis (130 %), 60 % de brûlure.', { k: 'dmg', t: 'mag', m: 1.3, aoe: true, el: 'fire', st: ['burn', .6, 3] }],
+  p2: ['Cœur du volcan', '🌋', '+6 % mana, +8 % dégâts d’altération par rang.', { mpPct: .06, dotPct: .08 }],
+  a3: ['Cataclysme', '☄️', 36, 4, 'Désastre de feu sur tous (280 %).', { k: 'dmg', t: 'mag', m: 2.8, aoe: true, el: 'fire' }], c: ['statusApplied', 60, 'altérations infligées']
+});
+cls6('mage_chaos', 'x', {
+  sp: ['Éclat chaotique', '💥', 14, 2, 'Déflagration (260 %) qui vous coûte 8 % de vos PV.', { k: 'dmg', t: 'mag', m: 2.6, el: 'dark', selfDmg: .08 }],
+  a1: ['Entropie', '🧿', 12, 1, 'Dégâts (150 %), poison et brûlure.', { k: 'dmg', t: 'mag', m: 1.5, st: ['poison', .6, 4], st2: ['burn', .6, 3] }],
+  p1: ['Folie contrôlée', '🎲', '+6 % dégâts de compétence, +2 % critique par rang.', { skillPct: .06, critFlat: 2 }],
+  a2: ['Faille instable', '🕳️', 16, 2, 'Arcane sur tous (120 %), 25 % d’étourdir.', { k: 'dmg', t: 'mag', m: 1.2, aoe: true, el: 'arcane', st: ['stun', .25, 1] }],
+  p2: ['Pacte du vide', '🌌', '+10 % dégâts critiques, +5 % mana par rang.', { critDmg: .1, mpPct: .05 }],
+  a3: ['Singularité', '⚫', 40, 5, 'Effondrement (320 %) sur tous, coûte 10 % de PV.', { k: 'dmg', t: 'mag', m: 3.2, aoe: true, el: 'dark', selfDmg: .1 }], c: ['skillsUsed', 80, 'compétences utilisées']
+});
+cls6('invocateur', 'i', {
+  sp: ['Appel du familier', '🐲', 16, 4, 'Un familier combat 5 tours (80 % de votre attaque).', { k: 'summon', n: 'Familier', pow: .8, t: 5, cnt: 1 }],
+  a1: ['Lien spirituel', '💞', 10, 3, 'Soigne 20 % des PV via vos esprits.', { k: 'heal', f: .2 }],
+  p1: ['Maître des esprits', '👻', '+10 % puissance des invocations, +4 % mana par rang.', { summonPct: .1, mpPct: .04 }],
+  a2: ['Meute spectrale', '🐺', 24, 5, 'Invoque 2 loups spectraux pendant 4 tours.', { k: 'summon', n: 'Loup spectral', pow: .5, t: 4, cnt: 2 }],
+  p2: ['Pacte renforcé', '📿', '+10 % invocations, +2 mana par victime par rang.', { summonPct: .1, onKillMp: 2 }],
+  a3: ['Colosse invoqué', '🗿', 34, 6, 'Invoque un colosse (160 %) pendant 4 tours.', { k: 'summon', n: 'Colosse', pow: 1.6, t: 4, cnt: 1 }], c: ['summonsUsed', 25, 'invocations']
+});
+cls6('druide', 'd', {
+  sp: ['Floraison', '🌸', 14, 4, 'Régénère 8 % des PV max par tour pendant 4 tours.', { k: 'buff', b: { regen: .08 }, t: 4 }],
+  a1: ['Ronces', '🌹', 8, 0, 'Dégâts (140 %) et poison.', { k: 'dmg', t: 'mag', m: 1.4, el: 'poison', st: ['poison', .6, 4] }],
+  p1: ['Sève vitale', '🌱', '+1 % PV par tour, +5 % soins par rang.', { regenTurn: .01, healPct: .05 }],
+  a2: ['Griffes de l’ours', '🐻', 12, 1, 'Griffes (180 %), saignement.', { k: 'dmg', t: 'phys', m: 1.8, st: ['bleed', .5, 3] }],
+  p2: ['Peau d’écorce', '🪵', '+4 % défense, +8 % résistance au poison par rang.', { defPct: .04, resPoison: .08 }],
+  a3: ['Colère de la forêt', '🌲', 28, 3, 'Racines sur tous (210 %), poison.', { k: 'dmg', t: 'mag', m: 2.1, aoe: true, el: 'poison', st: ['poison', .6, 4] }], c: ['potions', 10, 'potions utilisées']
+});
+cls6('moine', 'o', {
+  sp: ['Rafale de poings', '👊', 10, 2, '5 coups (5 × 50 %).', { k: 'dmg', t: 'phys', m: .5, hits: 5 }],
+  a1: ['Paume vibrante', '🖐️', 8, 0, 'Frappe (160 %), 30 % d’étourdir.', { k: 'dmg', t: 'phys', m: 1.6, st: ['stun', .3, 1] }],
+  p1: ['Corps affûté', '🧘', '+2 % esquive et +2 % critique par rang.', { dodgeFlat: 2, critFlat: 2 }],
+  a2: ['Souffle intérieur', '🌬️', 0, 4, 'Rend 30 % du mana ; prochaine attaque critique.', { k: 'focus', mpf: .3 }],
+  p2: ['Discipline', '☯️', '+2 vitesse, +5 % efficacité de la défense par rang.', { spdFlat: 2, defendBonus: .05 }],
+  a3: ['Dragon ascendant', '🐉', 24, 3, 'Uppercut (300 %), +30 % critique.', { k: 'dmg', t: 'phys', m: 3.0, cb: 30 }], c: ['crits', 60, 'coups critiques']
+});
+cls6('samourai', 's', {
+  sp: ['Iaïdo', '⚡', 12, 3, 'Dégainage (240 %), +40 % de critique.', { k: 'dmg', t: 'phys', m: 2.4, cb: 40 }],
+  a1: ['Coupe-vent', '🌬️', 8, 0, 'Frappe (150 %), saignement.', { k: 'dmg', t: 'phys', m: 1.5, st: ['bleed', .5, 3] }],
+  p1: ['Voie du sabre', '🗡️', '+10 % dégâts critiques, +2 % attaque par rang.', { critDmg: .1, atkPct: .02 }],
+  a2: ['Posture du roseau', '🎋', 10, 3, 'Pendant 2 tours, riposte à 160 % à chaque coup reçu.', { k: 'counter', m: 1.6, t: 2 }],
+  p2: ['Honneur', '🏮', '+2 % critique, +1 % esquive par rang.', { critFlat: 2, dodgeFlat: 1 }],
+  a3: ['Mille éclats', '🌸', 26, 3, '3 coups (3 × 110 %), +20 % critique.', { k: 'dmg', t: 'phys', m: 1.1, hits: 3, cb: 20 }], c: ['counters', 10, 'ripostes']
+});
+cls6('lancier', 'l', {
+  sp: ['Percée', '➳', 10, 2, '2 coups de lance (2 × 140 %).', { k: 'dmg', t: 'phys', m: 1.4, hits: 2 }],
+  a1: ['Estoc', '🔱', 7, 0, 'Estoc précis (170 %).', { k: 'dmg', t: 'phys', m: 1.7 }],
+  p1: ['Allonge', '📏', '+5 % pénétration d’armure, +1 vitesse par rang.', { penFlat: 5, spdFlat: 1 }],
+  a2: ['Balayage', '🌀', 14, 2, 'Frappe tous les ennemis (120 %).', { k: 'dmg', t: 'phys', m: 1.2, aoe: true }],
+  p2: ['Pointe affûtée', '📍', '+2 % critique, +4 % pénétration par rang.', { critFlat: 2, penFlat: 4 }],
+  a3: ['Lance du dragon', '🐲', 26, 3, 'Coup perçant (300 %), +50 % sous 40 % PV.', { k: 'dmg', t: 'phys', m: 3.0, exec: .5 }], c: ['kills', 100, 'ennemis vaincus']
+});
+cls6('ingenieur', 'q', {
+  sp: ['Tourelle', '🗼', 18, 5, 'Une tourelle tire pendant 4 tours (100 % de votre attaque).', { k: 'summon', n: 'Tourelle', pow: 1.0, t: 4, cnt: 1 }],
+  a1: ['Grenade runique', '💣', 12, 2, 'Explose sur tous (110 %), 50 % de brûlure.', { k: 'dmg', t: 'phys', m: 1.1, aoe: true, el: 'fire', st: ['burn', .5, 3] }],
+  p1: ['Ingénierie', '🔧', '+4 % dégâts de compétence, +3 % butin par rang.', { skillPct: .04, lootLuck: .03 }],
+  a2: ['Bouclier arcanique', '🔰', 12, 4, 'Défense +35 % pendant 3 tours.', { k: 'buff', b: { def: .35 }, t: 3 }],
+  p2: ['Mécanisme précis', '⚙️', '+2 % critique, +3 % précision par rang.', { critFlat: 2, precFlat: 3 }],
+  a3: ['Canon arcanique', '🔫', 30, 4, 'Rayon concentré (300 %).', { k: 'dmg', t: 'mag', m: 3.0, el: 'arcane' }], c: ['skillsUsed', 60, 'compétences utilisées']
+});
+cls6('barde', 'ba', {
+  sp: ['Chant de bravoure', '🎶', 14, 4, 'Attaque +25 %, défense +15 %, +20 % critique pendant 4 tours.', { k: 'buff', b: { atk: .25, def: .15, crit: 20 }, t: 4 }],
+  a1: ['Note perçante', '🔔', 6, 0, 'Son (130 %), 25 % d’étourdir.', { k: 'dmg', t: 'mag', m: 1.3, st: ['stun', .25, 1] }],
+  p1: ['Voix envoûtante', '🎤', '+5 % soins, +2 % XP par rang.', { healPct: .05, xpPct: .02 }],
+  a2: ['Berceuse', '🌙', 12, 3, 'Soigne 25 % des PV.', { k: 'heal', f: .25 }],
+  p2: ['Répertoire', '📜', '+5 % mana, +3 % dégâts de compétence par rang.', { mpPct: .05, skillPct: .03 }],
+  a3: ['Crescendo', '🎼', 28, 3, 'Onde sonore sur tous (200 %), 30 % d’étourdir.', { k: 'dmg', t: 'mag', m: 2.0, aoe: true, st: ['stun', .3, 1] }], c: ['skillsUsed', 50, 'compétences utilisées']
+});
+cls6('chevalier_noir', 'cn', {
+  sp: ['Étreinte sombre', '🖤', 14, 3, 'Frappe sombre (200 %), soigne 50 % des dégâts.', { k: 'dmg', t: 'phys', m: 2.0, el: 'dark', hd: .5 }],
+  a1: ['Lame maudite', '🗡️', 10, 0, 'Frappe (160 %), poison des ténèbres.', { k: 'dmg', t: 'phys', m: 1.6, el: 'dark', st: ['poison', .6, 4] }],
+  p1: ['Armure d’ombre', '🌑', '−2 % dégâts subis, +1 % vol de vie par rang.', { dmgTakenPct: -.02, lifesteal: .01 }],
+  a2: ['Pacte funeste', '📿', 12, 4, 'Attaque +40 %, défense −15 % pendant 3 tours.', { k: 'buff', b: { atk: .4, def: -.15 }, t: 3 }],
+  p2: ['Appétit des ténèbres', '😈', '+2 % vol de vie, +3 % attaque par rang.', { lifesteal: .02, atkPct: .03 }],
+  a3: ['Fauchée noire', '⚰️', 30, 4, 'Arc sombre sur tous (220 %), soigne 30 %.', { k: 'dmg', t: 'phys', m: 2.2, aoe: true, el: 'dark', hd: .3 }], c: ['killsBoss', 5, 'boss vaincus']
+});
+cls6('chronomancien', 't', {
+  sp: ['Arrêt du temps', '⏱️', 20, 5, 'Vous rejouez immédiatement ; rend 10 % du mana.', { k: 'extra', mpf: .1 }],
+  a1: ['Éclat temporel', '⌛', 10, 0, 'Arcane (160 %), 20 % d’étourdir.', { k: 'dmg', t: 'mag', m: 1.6, el: 'arcane', st: ['stun', .2, 1] }],
+  p1: ['Sens du temps', '🕰️', '+2 vitesse, +1 % esquive par rang.', { spdFlat: 2, dodgeFlat: 1 }],
+  a2: ['Hâte', '💨', 14, 4, 'Attaque +20 %, esquive +15 % pendant 3 tours.', { k: 'buff', b: { atk: .2, dodge: .15 }, t: 3 }],
+  p2: ['Écho temporel', '🔁', '+2 % tour supplémentaire, +4 % mana par rang.', { extraTurn: .02, mpPct: .04 }],
+  a3: ['Distorsion', '🌀', 32, 4, 'Onde temporelle sur tous (240 %), 30 % de gel.', { k: 'dmg', t: 'mag', m: 2.4, aoe: true, el: 'arcane', st: ['freeze', .3, 1] }], c: ['fastWins', 15, 'victoires rapides']
+});
 
 /* ---------- 8. EXPLORATION / ÉVÉNEMENTS / DONJONS ---------- */
 const NARR = [
@@ -1278,6 +1575,21 @@ const NARR = [
     { t: 'Payer 60 or pour le contrat', need: { gold: 60 }, out: [{ p: 1, txt: 'Vous livrez le colis sans poser de questions. La Guilde note votre discrétion.', do: { gold: 160, rep: { ombres: 12 }, xp: 50 } }] },
     { t: 'Dénoncer à la Garde', out: [{ p: 1, txt: 'La Garde vous remercie. Les Ombres, moins.', do: { rep: { couronne: 10, ombres: -12 }, gold: 40, c: { kind: 1 } } }] },
     { t: 'Ignorer', out: [{ p: 1, txt: 'La silhouette s’efface dans la brume.', do: {} }] }] },
+  { id: 'o_nord', n: 'Un frère de clan', zones: null, minLvl: 2, w: 6, once: true, cond: () => G.p.origin === 'nord', txt: 'Un guerrier aux tresses givrées vous reconnaît : « Par Skadi ! Un des nôtres, si loin des fjords ! » Il vous tend une corne d’hydromel.', ch: [
+    { t: 'Trinquer avec lui', out: [{ p: 1, txt: 'Vous échangez des nouvelles du pays. Il vous offre une potion et un conseil de survie.', do: { xp: 60, cons: { potion_hp: 1 }, hp: .3, c: { originEv: 1, kind: 1 } } }] },
+    { t: 'Le défier en lutte', out: [{ p: .6, txt: 'Vous le clouez au sol ! Il rit et paie son pari.', do: { gold: 70, c: { originEv: 1 } } }, { p: .4, txt: 'Il vous écrase avec bonne humeur.', do: { hp: -.1, c: { originEv: 1 } } }] }] },
+  { id: 'o_zahar', n: 'La caravane de Zahar', zones: null, minLvl: 2, w: 6, once: true, cond: () => G.p.origin === 'zahar', txt: 'Une caravane aux tentures safran s’arrête. Le chef de convoi reconnaît votre accent : « Un enfant de Zahar ! Pour vous, un prix d’ami. »', ch: [
+    { t: 'Marchander une potion rare (60 or)', need: { gold: 60 }, out: [{ p: 1, txt: 'Affaire conclue. Il glisse même une pièce en bonus.', do: { cons: { potion_hp2: 1 }, gold: 20, c: { originEv: 1 } } }] },
+    { t: 'Échanger des histoires', out: [{ p: 1, txt: 'Il vous apprend à repérer les bonnes affaires.', do: { xp: 50, rep: { ombres: 3 }, c: { originEv: 1 } } }] }] },
+  { id: 'o_ilvane', n: 'L’arbre qui se souvient', zones: ['foret', 'plaines', 'marais'], minLvl: 3, w: 6, once: true, cond: () => G.p.origin === 'ilvane', txt: 'Un vieil arbre murmure votre nom d’enfance. Les gens d’Ilvane sont les seuls à entendre ainsi leurs aînés.', ch: [
+    { t: 'Poser la main sur l’écorce', out: [{ p: 1, txt: 'Une chaleur vous traverse : la sève chante en vous.', do: { hp: 1, mp: 1, rep: { sylve: 8 }, c: { originEv: 1 } } }] },
+    { t: 'Passer sans écouter', out: [{ p: 1, txt: 'Le murmure s’éteint, un peu triste.', do: { rep: { sylve: -3 } } }] }] },
+  { id: 'o_mercenaire', n: 'L’ancien employeur', zones: null, minLvl: 3, w: 6, once: true, cond: () => G.p.bg === 'mercenaire', txt: 'Un homme cicatrisé vous barre la route : « Tu as quitté la compagnie sans payer ta dette. » Il n’a pas l’air d’humeur à plaisanter.', ch: [
+    { t: 'Payer 50 or', need: { gold: 50 }, out: [{ p: 1, txt: 'Il empoche la bourse et s’efface. La dette est réglée.', do: { rep: { ombres: 5 }, c: { originEv: 1 } } }] },
+    { t: 'L’affronter', out: [{ p: 1, txt: 'Il dégaine !', do: { c: { originEv: 1 }, fight: { tpl: 'duelliste', n: 1, elite: true, win: { gold: 90, xp: 80, rep: { ombres: 6 } } } } }] }] },
+  { id: 'o_pelerin', n: 'Le sanctuaire oublié', zones: null, minLvl: 3, w: 6, once: true, cond: () => G.p.bg === 'pelerin', txt: 'Un petit sanctuaire moussu, que vous reconnaissez : celui de votre pèlerinage. Une lueur douce vous appelle.', ch: [
+    { t: 'Prier', out: [{ p: 1, txt: 'La paix revient. Vous vous sentez pardonné.', do: { hp: 1, xp: 70, c: { originEv: 1, kind: 1 } } }] },
+    { t: 'Continuer', out: [{ p: 1, txt: 'Plus tard, peut-être.', do: {} }] }] },
   { id: 'mage', n: 'Le mage égaré', zones: null, minLvl: 5, w: 2, txt: 'Un apprenti du Cercle Arcanique cherche ses parchemins, perdu et paniqué.', ch: [
     { t: 'L’aider à chercher', out: [{ p: 1, txt: 'Vous retrouvez ses parchemins. Il vous offre une potion de mana.', do: { rep: { cercle: 10 }, cons: { potion_mp: 1 }, c: { kind: 1 }, xp: 40 } }] },
     { t: 'Lui voler un parchemin', out: [{ p: 1, txt: 'Le parchemin se vend bien… mais le Cercle l’apprendra.', do: { gold: 80, rep: { cercle: -10 }, c: { ruthless: 1 } } }] },
@@ -1560,7 +1872,7 @@ const Shop = {
 };
 
 /* ---------- 10. INTERFACE ---------- */
-const U = { screen: 'title', tab: 'town', zone: 'plaines', sel: null, invF: 'all', traitCat: 'all', craftTab: 'forge', shopTab: 'forge', cmenu: null, exLog: [], cr: { name: '', portrait: 0, cls: 'guerrier', style: 'offensif', weapon: 0 }, enc: null, ev: null, compMsg: {}, forgeSlot: 'weapon', forgeQ: 0, upSel: null, tipCache: {} };
+const U = { screen: 'title', tab: 'town', zone: 'plaines', sel: null, invF: 'all', traitCat: 'all', craftTab: 'forge', shopTab: 'forge', cmenu: null, exLog: [], cr: { name: '', portrait: 0, sex: 'x', origin: 'aldra', bg: 'orphelin', diff: 'normal', cls: 'guerrier', style: 'offensif', weapon: 0 }, enc: null, ev: null, compMsg: {}, forgeSlot: 'weapon', forgeQ: 0, upSel: null, tipCache: {} };
 const $id = id => document.getElementById(id);
 const TABS = [['town', '🏰', 'Ville'], ['explore', '🧭', 'Explorer'], ['char', '👤', 'Héros'], ['inv', '🎒', 'Inventaire'], ['skills', '✨', 'Compétences'], ['traits', '🌟', 'Traits'], ['quests', '📜', 'Quêtes'], ['comp', '🤝', 'Compagnons'], ['craft', '🔨', 'Artisanat'], ['shop', '💰', 'Marché'], ['stats', '🏆', 'Succès'], ['rep', '👑', 'Renommée'], ['opts', '⚙️', 'Options']];
 const TRAIT_ICON = { combat: '⚔️', survie: '❤️', exploration: '🧭', equipement: '🛡️', social: '🤝', secret: '🌑', maudit: '☠️' };
@@ -1611,17 +1923,24 @@ const UI = {
 
   /* ----- Création de personnage ----- */
   create() {
-    UI.show('create'); const c = U.cr, cl = CLASS(c.cls);
+    UI.show('create'); const c = U.cr, cl = CLASS(c.cls), og = ORIGINS.find(o => o.id === c.origin), bg = BACKGROUNDS.find(b => b.id === c.bg);
+    const pick = (act, items, cur, fn) => `<div class="grid">${items.map(x => `<button class="card ${cur === x.id ? 'sel' : ''}" data-act="${act}" data-id="${x.id}"><b>${fn(x)}</b><small>${x.d}</small></button>`).join('')}</div>`;
     $id('screen-create').innerHTML = `<div class="create">
       <h2>Création du héros</h2>
       <div class="panel"><label class="lbl" for="cr-name">Nom</label><input id="cr-name" data-bind="name" maxlength="20" placeholder="Votre nom" value="${esc(c.name)}" autocomplete="off">
+        <div class="lbl">Présentation</div><div class="row wrap">${SEXES.map(([k, n]) => `<button class="btn ${c.sex === k ? 'primary' : ''}" data-act="crSex" data-id="${k}">${n}</button>`).join('')}</div>
         <div class="lbl">Portrait</div><div class="row wrap">${PORTRAITS.map((p, i) => `<button class="portrait-btn ${c.portrait === i ? 'sel' : ''}" data-act="crPortrait" data-i="${i}" aria-label="Portrait ${i + 1}">${p}</button>`).join('')}</div></div>
-      <div class="panel"><div class="lbl">Classe</div><div class="grid cls-grid">${CLASSES.map(k => `<button class="card cls ${c.cls === k.id ? 'sel' : ''}" data-act="crClass" data-id="${k.id}"><span class="big-ico">${k.i}</span><b>${k.n}</b><small>${k.d}</small></button>`).join('')}</div>
+      <div class="panel"><div class="lbl">Pays d’origine</div>${pick('crOrigin', ORIGINS, c.origin, x => x.i + ' ' + x.n)}
+        <div class="lbl">Histoire</div>${pick('crBg', BACKGROUNDS, c.bg, x => x.n)}
+        <small>Votre origine et votre histoire modifient vos bonus, votre réputation de départ, certains dialogues et événements, et des conditions de traits.</small></div>
+      <div class="panel"><div class="lbl">Classe</div><div class="grid cls-grid">${CLASSES.filter(k => !k.adv).map(k => `<button class="card cls ${c.cls === k.id ? 'sel' : ''}" data-act="crClass" data-id="${k.id}"><span class="big-ico">${k.i}</span><b>${k.n}</b><small>${k.d}</small></button>`).join('')}</div>
+        <small>Classes avancées (Chevalier noir, Chronomancien) : à débloquer en jeu, via le changement de classe.</small>
         <div class="cls-detail"><div><b>Statistiques initiales</b> : ${['str', 'int', 'agi', 'end'].map(k => `${STAT_LABEL[k]} ${cl.base[k]}`).join(' · ')}</div>
         <div class="good">Avantages : ${cl.pros.join(', ')}</div><div class="bad">Faiblesses : ${cl.cons.join(', ')}</div>
         <div>Compétence spéciale : <b>${SK[cl.sp].ico} ${SK[cl.sp].n}</b> — ${SK[cl.sp].d}</div></div></div>
       <div class="panel"><div class="lbl">Style de combat</div><div class="grid">${STYLES.map(s => `<button class="card ${c.style === s.id ? 'sel' : ''}" data-act="crStyle" data-id="${s.id}"><b>${s.i} ${s.n}</b><small>${s.d}</small></button>`).join('')}</div>
-        <div class="lbl">Arme de départ</div><div class="row wrap">${cl.weapons.map((w, i) => `<button class="btn ${c.weapon === i ? 'primary' : ''}" data-act="crWeapon" data-i="${i}">${ITEM_BASES.weapon.find(b => b.cat === w).i} ${CAT_NAME[w]}${MAGIC_CATS.includes(w) ? ' (magique)' : ''}</button>`).join('')}</div></div>
+        <div class="lbl">Arme de départ</div><div class="row wrap">${cl.weapons.map((w, i) => `<button class="btn ${c.weapon === i ? 'primary' : ''}" data-act="crWeapon" data-i="${i}">${ITEM_BASES.weapon.find(b => b.cat === w).i} ${CAT_NAME[w]}${MAGIC_CATS.includes(w) ? ' (magique)' : ''}</button>`).join('')}</div>
+        <div class="lbl">Difficulté</div>${pick('crDiff', Object.keys(DIFFICULTY).map(k => Object.assign({ id: k }, DIFFICULTY[k])), c.diff, x => x.n)}</div>
       <div class="row"><button class="btn" data-act="toTitle">Retour</button><button class="btn primary big" data-act="start">Commencer l’aventure</button></div></div>`;
   },
 
@@ -1708,7 +2027,9 @@ Object.assign(Hooks, {
 const V = UI.views;
 function npcLines() {
   const t = TITLES.find(x => x.id === G.title), nm = esc(G.p.name), r = G.rep, out = [];
-  out.push(['🛡️ Garde', r.couronne >= 100 ? `« Salutations, ${esc(t.n)} ${nm} ! La Couronne vous doit beaucoup. »` : r.couronne < -30 ? '« Vous. Je vous ai à l’œil. »' : r.couronne >= 30 ? `« Bonne journée, ${nm}. »` : '« Circulez, voyageur. »']);
+  const adr = G.p.sex === 'f' ? 'Dame ' : G.p.sex === 'm' ? 'Messire ' : '';
+  const og = ORIGINS.find(o => o.id === G.p.origin); if (og) out.push(['🧭 Compatriote', og.line]);
+  out.push(['🛡️ Garde', r.couronne >= 100 ? `« Salutations, ${adr}${esc(t.n)} ${nm} ! La Couronne vous doit beaucoup. »` : r.couronne < -30 ? '« Vous. Je vous ai à l’œil. »' : r.couronne >= 30 ? `« Bonne journée, ${nm}. »` : '« Circulez, voyageur. »']);
   out.push(['🔮 Mage', r.cercle >= 100 ? '« Les arcanes vous reconnaissent, archimage. »' : r.cercle < -30 ? '« Ne touchez à rien. À RIEN. »' : r.cercle >= 30 ? '« Intéressant. Vous avez l’éclat de ceux qui apprennent. »' : '« Pas le temps, mes parchemins m’attendent. »']);
   out.push(['🗝️ Rôdeur de la Guilde', r.ombres >= 100 ? '« Pour vous, la maison offre le silence. »' : r.ombres < -30 ? '« On n’aime pas les balances ici. »' : r.ombres >= 30 ? '« Si vous cherchez du travail discret… »' : '« Je ne vous ai jamais vu. »']);
   out.push(['🌳 Druide', r.sylve >= 100 ? '« La forêt parle de vous avec douceur. »' : r.sylve < -30 ? '« Les arbres se souviennent de votre cruauté. »' : r.sylve >= 30 ? '« Les bêtes ne vous craignent pas. Bon signe. »' : '« Marchez doucement. »']);
@@ -1724,6 +2045,7 @@ V.town = () => {
   return `<h2>Aube-Haute</h2><div class="grid two">
     <div class="panel"><h3>Auberge</h3><p>Une bonne nuit rend tous vos PV et votre mana.</p><button class="btn primary" data-act="rest" ${G.p.gold >= cost ? '' : 'disabled'}>Se reposer — ${cost} or</button><div class="row wrap">${alerts}</div></div>
     <div class="panel"><h3>Objectif principal</h3>${mq ? `<b>${mq.n}</b><p>${mq.d}</p>${Quests.status(mq) === 'avail' ? `<button class="btn" data-act="qAccept" data-id="${mq.id}">Accepter</button>` : `<small>${Quests.cur(mq)}/${mq.obj.n}</small>`}` : '<p>Toutes les quêtes principales sont accomplies. Vous êtes une légende.</p>'}</div>
+    ${G.flags.tutDone || G.flags.tutHidden ? '' : `<div class="panel wide"><h3>🎓 Tutoriel <small>${Tutorial.done()} / ${TUTORIAL.length}</small></h3>${TUTORIAL.map(t => { const ok = val(t[2]) >= t[3]; return `<div class="goal"><span class="${ok ? 'good' : ''}">${ok ? '✔' : '○'} <b>${t[0]}</b> — <small>${t[1]}</small></span></div>`; }).join('')}<p><small>Récompense : 100 or, 3 potions de soin, 2 potions de mana.</small></p><button class="btn sm" data-act="hideTut">Masquer</button></div>`}
     <div class="panel wide"><h3>Sur la place</h3>${npcLines().map(([n, l]) => `<div class="npc"><b>${n}</b><span>${l}</span></div>`).join('')}</div>
     <div class="panel wide"><h3>Conseils</h3><p>Le monde observe vos actes : esquivez, épargnez, explorez, forgez… chaque comportement rapproche un trait. Ouvrez l’onglet <b>Traits</b> pour suivre vos progrès.</p></div></div>`;
 };
@@ -1753,8 +2075,11 @@ V.char = () => {
     <p><small>Chaque niveau : +3 points, +1 point de compétence et progression automatique de la classe.</small></p></div>
     <div class="panel"><h3>Statistiques</h3><table class="stats"><thead><tr><th></th><th>Base</th><th>Équip.</th><th>Bonus</th><th>Final</th><th></th></tr></thead><tbody>
       ${row('Force', 'str', fmt, 'str')}${row('Intelligence', 'int', fmt, 'int')}${row('Agilité', 'agi', fmt, 'agi')}${row('Endurance', 'end', fmt, 'end')}
-      ${row('PV max', 'maxHp')}${row('Mana max', 'maxMp')}${row('Attaque', 'atk')}${row('Puiss. magique', 'mag')}${row('Défense', 'def')}${row('Vitesse', 'spd', f1)}${row('Critique %', 'crit', f1)}${row('Esquive %', 'dodge', f1)}</tbody></table>
+      ${row('PV max', 'maxHp')}${row('Mana max', 'maxMp')}${row('Attaque', 'atk')}${row('Puiss. magique', 'mag')}${row('Défense physique', 'def')}${row('Résist. magique', 'mres')}${row('Vitesse', 'spd', f1)}${row('Précision %', 'prec', f1)}${row('Esquive %', 'dodge', f1)}${row('Critique %', 'crit', f1)}${row('Dégâts crit. %', 'critDmg', f1)}${row('Pénétration %', 'pen', f1)}${row('Vol de vie %', 'lifesteal', f1)}${row('Régén./tour %', 'regen', f1)}${row('Résist. altér. %', 'sres', f1)}${row('Découverte %', 'find', f1)}${row('Soins %', 'healPow', f1)}</tbody></table>
       <small>Base = niveau + points · Équip. = objets · Bonus = classe, style, traits, titre, compétences.</small></div></div>
+    ${G.p.lvl >= MAXLVL || G.p.par.lvl ? `<div class="panel"><h3>✦ Paragon ${G.p.par.lvl} <small>points : ${G.p.par.pts}</small></h3>${bar(G.p.par.xp, Paragon.need(G.p.par.lvl), 'xp', `XP Paragon ${fmt(G.p.par.xp)} / ${fmt(Paragon.need(G.p.par.lvl))}`)}<p><small>Après le niveau 250, l’XP nourrit le Paragon. Chaque catégorie est plafonnée à ${PAR_CAP} points.</small></p>${Object.keys(PAR_CATS).map(k => `<div class="recipe"><span><b>${PAR_CATS[k][0]}</b> <small>${PAR_CATS[k][3]} — ${(G.p.par.alloc[k] || 0)}/${PAR_CAP}</small></span><button class="plus" data-act="parSpend" data-c="${k}" ${G.p.par.pts > 0 && (G.p.par.alloc[k] || 0) < PAR_CAP ? '' : 'disabled'}>+</button></div>`).join('')}<button class="btn sm" data-act="parReset">Réinitialiser (gratuit)</button></div>` : ''}
+    <div class="panel"><h3>Changement de classe</h3><p><small>Niveau 10 minimum. Coût : ${fmt(Game.classChangeCost())} or (augmente à chaque changement). Les compétences de l’ancienne classe sont remboursées ; niveau, points répartis et équipement sont conservés.</small></p>
+      <div class="grid">${CLASSES.filter(c => c.id !== p.cls).map(c => { const ok = Game.classUnlocked(c); return `<button class="card" data-act="changeClass" data-id="${c.id}" ${ok && p.lvl >= 10 && p.gold >= Game.classChangeCost() && !G.flags.inCombat ? '' : 'disabled'}><b>${c.i} ${c.n}</b><small>${c.pros.join(' · ')}</small>${c.adv ? `<small class="${ok ? 'good' : 'bad'}">Avancée : niv. ${c.adv.lvl}, ${c.adv.g.map(g => `${g.l} (${Math.min(val(g.c), g.n)}/${g.n})`).join(', ')}</small>` : ''}</button>`; }).join('')}</div></div>
     <div class="panel"><h3>Sources de bonus actives</h3><div class="srcs">${E.map(s => { const t = effText(s.eff); return t.length ? `<div><b>${esc(s.src)}</b><small>${t.join(', ')}</small></div>` : ''; }).join('')}</div></div>`;
 };
 
@@ -1874,12 +2199,16 @@ V.opts = () => `<h2>Options & sauvegarde</h2><div class="panel"><p>Sauvegarde au
 /* ----- Actions (délégation de clics) ----- */
 const Act = {
   continue() { if (Game.load()) { applySettings(); UI.game(); Game.sync(); } },
-  newgame() { if (Save.exists() && !confirm('Une sauvegarde existe déjà. Elle sera remplacée à la fin de la création. Continuer ?')) return; U.cr = { name: '', portrait: 0, cls: 'guerrier', style: 'offensif', weapon: 0 }; UI.create(); },
+  newgame() { if (Save.exists() && !confirm('Une sauvegarde existe déjà. Elle sera remplacée à la fin de la création. Continuer ?')) return; U.cr = { name: '', portrait: 0, sex: 'x', origin: 'aldra', bg: 'orphelin', diff: 'normal', cls: 'guerrier', style: 'offensif', weapon: 0 }; UI.create(); },
   wipe() { if (confirm('Supprimer définitivement la sauvegarde ? Cette action est irréversible.')) { Save.wipe(); G = null; UI.title(); UI.toast('Sauvegarde supprimée.'); } },
   toTitle() { UI.title(); }, toTitle2() { Save.save(); UI.title(); },
+  crSex(d) { U.cr.sex = d.id; UI.create(); }, crOrigin(d) { U.cr.origin = d.id; UI.create(); }, crBg(d) { U.cr.bg = d.id; UI.create(); }, crDiff(d) { U.cr.diff = d.id; UI.create(); },
+  hideTut() { G.flags.tutHidden = true; Game.sync(); },
+  parSpend(d) { if (Paragon.spend(d.c)) Game.sync(); }, parReset() { Paragon.reset(); Game.sync(); },
+  changeClass(d) { const c = CLASSES.find(x => x.id === d.id); if (confirm(`Devenir ${c.n} pour ${fmt(Game.classChangeCost())} or ? Vos compétences de classe seront remboursées.`) && Game.changeClass(d.id)) UI.toast(`Vous êtes désormais ${c.n}.`, 'good'); },
   crPortrait(d) { U.cr.portrait = +d.i; UI.create(); }, crClass(d) { U.cr.cls = d.id; U.cr.weapon = 0; UI.create(); }, crStyle(d) { U.cr.style = d.id; UI.create(); }, crWeapon(d) { U.cr.weapon = +d.i; UI.create(); },
   start() { const n = U.cr.name.trim(); if (n.length < 2) { UI.toast('Choisissez un nom (2 caractères minimum).', 'bad'); return; } Game.create(U.cr); U.tab = 'town'; U.exLog = []; applySettings(); UI.game(); UI.toast(`Bienvenue, ${n} !`, 'good'); },
-  tab(d) { U.tab = d.t; U.sel = null; UI.renderGame(); $id('view').scrollTop = 0; },
+  tab(d) { U.tab = d.t; U.sel = null; if (d.t === 'traits') { G.c.seenTraits = 1; Tutorial.check(); } UI.renderGame(); $id('view').scrollTop = 0; },
   closeModal() { UI.closeModal(); },
   rest() { const c = Explore.rest(); if (c) UI.toast(`Vous vous reposez (−${c} or). PV et mana restaurés.`, 'good'); },
   qAccept(d) { Quests.accept(d.id); }, qClaim(d) { const l = Quests.claim(d.id, d.c === undefined ? undefined : +d.c); if (l) UI.toast('Récompenses : ' + l.join(' · '), 'good'); },
