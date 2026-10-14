@@ -230,3 +230,37 @@ body.no-anim *, body.no-anim *::before { animation: none !important; transition:
 select, input[type=search] { background: var(--bg2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: .4em .6em; font: inherit; }
 input[type=search] { flex: 1; min-width: 180px; }
 .rbtn { border-color: var(--rc); color: var(--rc); }
+
+/* ----- Modes de jeu ----- */
+.grid.modes { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.mode { display: flex; flex-direction: column; gap: .3rem; } .mode .mico { font-size: 2.4rem; } .mode p { flex: 1; }
+/* Forge */
+.forgebar { position: relative; height: 34px; background: #110e1a; border: 1px solid var(--line); border-radius: 17px; margin: .8rem 0; overflow: hidden; }
+.forgebar .fz { position: absolute; top: 0; bottom: 0; background: linear-gradient(90deg, #8a6a1e66, #e0b44f99, #8a6a1e66); border-left: 2px solid var(--gold); border-right: 2px solid var(--gold); }
+.forgebar .fm { position: absolute; top: 2px; bottom: 2px; width: 8px; margin-left: -4px; background: #fff; border-radius: 4px; box-shadow: 0 0 10px #fff; }
+/* Donjon : carte */
+.dwrap { height: 100%; overflow-y: auto; max-width: 980px; margin: 0 auto; padding: .8rem; display: flex; flex-direction: column; gap: .6rem; }
+.mbars { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: .4rem; }
+.dmap { position: relative; height: min(52vh, 380px); background: radial-gradient(600px 300px at 50% 50%, #2a2142, #17132299); border: 1px solid var(--line); border-radius: 12px; margin: .3rem 0; }
+.dsvg { position: absolute; inset: 0; width: 100%; height: 100%; } .dsvg .ln { stroke: #6f6590; stroke-width: 2; vector-effect: non-scaling-stroke; } .dsvg .ln.on { stroke: var(--gold); stroke-width: 3; } .dsvg .ln.dim { stroke: #3d3558; stroke-dasharray: 4 5; }
+.dn { position: absolute; transform: translate(-50%, -50%); width: 54px; height: 54px; border-radius: 50%; font-size: 1.5rem; background: var(--panel2); border: 2px solid var(--line); display: grid; place-items: center; }
+.dn.reach { border-color: var(--gold); box-shadow: 0 0 16px rgba(207, 168, 85, .7); animation: pulse 2s infinite; cursor: pointer; } .dn.done { background: #26402f; border-color: var(--green); opacity: .85; } .dn.cur { outline: 3px solid var(--teal); }
+.dn.k-e { border-color: #8a5cc4; } .dn.k-b { border-color: var(--red); width: 64px; height: 64px; } .dn:disabled:not(.done) { opacity: .7; }
+.dent { position: absolute; left: 1.5%; top: 50%; transform: translateY(-50%); font-size: 1.4rem; }
+.legend { font-size: .8rem; color: var(--muted); gap: .8rem; }
+/* Mine */
+.minewrap { height: 100%; overflow-y: auto; max-width: 980px; margin: 0 auto; padding: .8rem; display: flex; flex-direction: column; gap: .6rem; }
+.mflex { display: flex; gap: .8rem; flex-wrap: wrap; } .mgrid { display: flex; flex-direction: column; gap: 3px; flex: 1 1 360px; max-width: 520px; background: #0e0b16; padding: .5rem; border-radius: 10px; border: 1px solid var(--line); } .mside { flex: 1 1 240px; }
+.mrow { display: flex; gap: 3px; align-items: center; } .mdepth { width: 22px; font-size: .7rem; color: var(--muted); text-align: right; }
+.mc { flex: 1; aspect-ratio: 1; min-width: 0; font-size: 1.1rem; border: 1px solid #2a233b; border-radius: 5px; background: linear-gradient(90deg, #6a6078 var(--d, 100%), #3a3348 0); color: #fff; padding: 0; display: grid; place-items: center; }
+.mc.fog { background: #15111e; color: transparent; } .mc.open { background: #1d182a; border-color: #1d182a; } .mc.lava { background: #7a2418; } .mc.gold { background: linear-gradient(90deg, #a68a2a var(--d, 100%), #4c4120 0); } .mc.chest { background: linear-gradient(90deg, #7a4f2a var(--d, 100%), #3b2a1a 0); }
+.mc.ore { background: linear-gradient(90deg, #4f6a86 var(--d, 100%), #2b3748 0); } .mc.adj { outline: 2px solid var(--gold); cursor: pointer; } .mc.me { background: #2f6b5f; border-color: var(--teal); }
+/* Aventure temps réel */
+#screen-arcade { position: relative; background: #000; touch-action: none; } #ar-cv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ar-ui { position: absolute; inset: 0; pointer-events: none; } .ar-ui > * { pointer-events: auto; }
+.ar-joy { position: absolute; left: 18px; bottom: 22px; width: 110px; height: 110px; border-radius: 50%; background: rgba(255, 255, 255, .08); border: 2px solid rgba(255, 255, 255, .25); display: grid; place-items: center; touch-action: none; }
+.ar-joy i { width: 44px; height: 44px; border-radius: 50%; background: rgba(255, 255, 255, .35); }
+.ar-btns { position: absolute; right: 14px; bottom: 18px; display: grid; grid-template-columns: repeat(3, 56px); gap: 8px; align-items: end; }
+.arb { width: 56px; height: 56px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .4); background: rgba(30, 24, 50, .75); font-size: 1.3rem; color: #fff; touch-action: none; } .arb.big { grid-column: 1 / 4; width: 100%; border-radius: 28px; background: rgba(160, 70, 70, .8); }
+.ar-exit { position: absolute; right: 10px; top: 56px; } .ar-hint { position: absolute; left: 12px; bottom: 6px; font-size: .7rem; color: rgba(255, 255, 255, .5); }
+@media (max-width: 760px) { .ar-hint { display: none; } .dn { width: 46px; height: 46px; font-size: 1.2rem; } }

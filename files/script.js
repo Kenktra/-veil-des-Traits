@@ -426,6 +426,17 @@ const Paragon = {
   reset() { const p = G.p.par; let n = 0; for (const k in p.alloc) n += p.alloc[k]; p.pts += n; p.alloc = {}; }
 };
 
+/* Plafonds globaux des bonus cumulés (traits, objets, titres, compétences…) : évite l'empilement absurde au niveau 250 */
+const EFF_CAP = {
+  atkPct: [-.6, .9], defPct: [-.6, .9], hpPct: [-.6, .9], mpPct: [-.6, .9], allPct: [0, .35], skillPct: [0, 1.0],
+  critFlat: [-20, 35], dodgeFlat: [-20, 28], spdFlat: [-10, 40], precFlat: [0, 45], penFlat: [0, 40], sresFlat: [0, 40],
+  xpPct: [-.5, 1.0], goldPct: [-.5, 1.2], lootLuck: [0, 1.2], lifesteal: [0, .25], dmgTakenPct: [-.55, .8], healPct: [-.8, 1.2], regenPost: [0, .5], regenTurn: [0, .12],
+  dmgBossPct: [0, 1.0], nightAtk: [0, .5], statusChance: [0, 1], dotPct: [0, 1.5], finTh: [0, .3], shopDisc: [0, .4], upgBonus: [0, .5], peaceBonus: [0, .8],
+  companionPct: [0, 1.0], summonPct: [0, 1.2], deathMit: [0, .8], defendBonus: [0, .3], potionPct: [0, 1.0], thorns: [0, .6], extraTurn: [0, .3], critDmg: [-.5, 1.4],
+  onKillMp: [0, 40], mpRegen: [0, 25], hitBleed: [0, .6], hitBurn: [0, .6], hitFreeze: [0, .4], hitPoison: [0, .6],
+  resFire: [-.5, .75], resIce: [-.5, .75], resShock: [-.5, .75], resPoison: [-.5, .75], resDark: [-.5, .75], resHoly: [-.5, .75]
+};
+
 /* ---------- 2c. ARSENAL : catalogue d'objets nommés (étape 4) ----------
    Chaque entrée a une clé stable (key), une rareté fixe, un niveau minimal, un effet éventuel et une description.
    Les statistiques sont calculées d'après le niveau d'objet au moment du drop : un objet de rareté élevée mais
@@ -571,7 +582,7 @@ function newState() {
     v: 3, created: Date.now(), saved: 0, playTime: 0,
     settings: { anim: true },
     p: { name: '', portrait: 0, cls: 'guerrier', style: 'offensif', lvl: 1, xp: 0, gold: 60, hp: 1, mp: 1, base: { str: 0, int: 0, agi: 0, end: 0 }, pts: 0, sp: 0, sex: 'x', origin: 'aldra', bg: 'orphelin', diff: 'normal', alloc: { str: 0, int: 0, agi: 0, end: 0 }, par: { lvl: 0, xp: 0, pts: 0, alloc: {} }, classChanges: 0 },
-    inv: [], stash: [], eq: {}, cons: { potion_hp: 3, potion_mp: 1 }, mats: {},
+    inv: [], stash: [], recipes: {}, mine: null, eq: {}, cons: { potion_hp: 3, potion_mp: 1 }, mats: {},
     tr: {}, sk: {}, aug: {}, q: {}, comp: {}, active: null,
     zones: {}, bosses: {}, dung: {}, ach: {}, titles: { recrue: true }, title: 'recrue',
     rep: { couronne: 0, cercle: 0, ombres: 0, sylve: 0 },
@@ -596,6 +607,10 @@ function val(k) {
     case 'equipRare': return Object.values(G.eq).filter(i => i && i.r >= 2).length;
     case 'compCount': return Object.values(G.comp).filter(c => c.rec).length;
   }
+  if (k === 'gold') return G.p.gold;
+  if (k === 'factionsHonored') return Object.values(G.rep).filter(v => v >= 100).length;
+  if (k.startsWith('zx_')) return (G.zones[k.slice(3)] || {}).ex || 0;
+  if (k.startsWith('repneg_')) return Math.max(0, -(G.rep[k.slice(7)] || 0));
   if (k.startsWith('rep_')) return G.rep[k.slice(4)] || 0;
   if (k.startsWith('trait_')) return (G.tr[k.slice(6)] || {}).u ? 1 : 0;
   return G.c[k] || 0;
@@ -661,6 +676,7 @@ const Stats = {
   sum() {
     const E = {};
     for (const { eff } of this.list()) for (const k in eff) { const v = eff[k]; if (typeof v === 'number') E[k] = (E[k] || 0) + v; else E[k] = E[k] || v; }
+    for (const k in EFF_CAP) if (typeof E[k] === 'number') E[k] = clamp(E[k], EFF_CAP[k][0], EFF_CAP[k][1]);
     return E;
   },
   calc(withGear, withEff) {
@@ -768,7 +784,7 @@ const Player = {
     const S = Stats.get(); G.p.hp = S.maxHp; G.p.mp = S.maxMp;
     Hooks.levelUp(l);
   },
-  heal(n) { const S = Stats.get(), b = G.p.hp; G.p.hp = clamp(G.p.hp + Math.round(n), 0, S.maxHp); return G.p.hp - b; },
+  heal(n) { const S = Stats.get(), b = G.p.hp; G.p.hp = clamp(G.p.hp + Math.round(n), 0, S.maxHp); const g = G.p.hp - b; if (g > 0 && G.c) bump('healed', g); return g; },
   restoreMp(n) { const S = Stats.get(), b = G.p.mp; G.p.mp = clamp(G.p.mp + Math.round(n), 0, S.maxMp); return G.p.mp - b; },
   spend(stat) {
     if (G.p.pts <= 0 || !(stat in G.p.base)) return false;
@@ -841,7 +857,7 @@ Object.assign(Inv, {
     }
     if (src !== 'shop') it.isNew = true;
     G.inv.push(it);
-    if (src !== 'shop') { bump('itemsFound'); if (it.r >= 2) bump('rareDrops'); if (it.r >= 3) bump('epicFound'); if (it.r === 6) bump('secretFound'); }
+    if (src !== 'shop') { bump('itemsFound'); if (it.r >= 2) bump('rareDrops'); if (it.r >= 3) bump('epicFound'); if (it.r === 6) bump('secretFound'); if (it.r >= 4) bump('legFound'); if (it.r >= 5) bump('mythFound'); }
     return true;
   },
   pick(ids, from = G.inv) { const s = new Set(ids), seen = new Set(), out = []; for (const it of from) if (s.has(it.id) && !seen.has(it.id)) { seen.add(it.id); out.push(it); } return out; },
@@ -856,12 +872,13 @@ Object.assign(Inv, {
   },
   sellBelow(maxR) { return this.sellMany(this.eligible(maxR).map(i => i.id)); },
   dismantleMany(ids) {
-    const items = this.pick(ids).filter(i => !this.protectedItem(i)), mats = {};
+    const items = this.pick(ids).filter(i => !this.protectedItem(i)), mats = {}, plans = [];
     for (const it of items) {
       this.remove(it.id); bump('dismantled');
+      if (it.key) { G.recipes = G.recipes || {}; if (!G.recipes[it.key]) { G.recipes[it.key] = true; plans.push(it.name); bump('plans'); } }
       const t = DISMANTLE[it.r]; for (const k in t) { const n = t[k] + (it.up > 0 && k === 'ore' ? it.up : 0); mats[k] = (mats[k] || 0) + n; G.mats[k] = (G.mats[k] || 0) + n; }
     }
-    Game.sync(); return { n: items.length, mats };
+    Game.sync(); if (plans.length) Hooks.toast('📐 Plan appris : ' + plans.join(', '), 'trait'); return { n: items.length, mats, plans };
   },
   toggle(id, key) { const it = this.find(id) || G.stash.find(x => x.id === id); if (it) { it[key] = !it[key]; Game.sync(); } },
   stashOpen() { return G.p.lvl >= this.STASH_LVL; },
@@ -1075,7 +1092,7 @@ const Quests = {
     if (q.choices && choice === undefined) return null;
     const lines = Game.reward(q.rew, 'quête');
     if (q.choices) lines.push(...Game.reward(q.choices[choice].rew, 'choix'));
-    this.store(q)[id].s = 'done'; bump('questsDone'); bump('q_' + id);
+    this.store(q)[id].s = 'done'; bump('questsDone'); bump('q_' + id); bump('qt_' + q.type);
     Game.sync(); return lines;
   }
 };
@@ -1098,7 +1115,7 @@ const Tutorial = {
 };
 const Game = {
   create(o) {
-    G = newState();
+    G = newState(); Dungeon.D = null;
     const cl = CLASS(o.cls), og = ORIGINS.find(x => x.id === o.origin) || ORIGINS[0], bg = BACKGROUNDS.find(x => x.id === o.bg) || BACKGROUNDS[0];
     G.p.name = o.name.trim().slice(0, 20); G.p.portrait = o.portrait; G.p.cls = o.cls; G.p.style = o.style;
     G.p.sex = o.sex || 'x'; G.p.origin = og.id; G.p.bg = bg.id; G.p.diff = DIFFICULTY[o.diff] ? o.diff : 'normal';
@@ -1129,7 +1146,7 @@ const Game = {
   },
   load() {
     const d = Save.read(); if (!d) return false;
-    G = d;
+    G = d; Dungeon.D = G.flags.dstate || null;
     if (G.flags.inCombat) { // rechargement en plein combat : fuite forcée (anti save-scumming)
       const loss = Math.floor(G.p.gold * .1); G.p.gold -= loss; G.flags.inCombat = false; G.flags.dungeon = null;
       Hooks.toast(`Combat interrompu : vous avez fui (−${loss} or).`, 'bad');
@@ -1155,6 +1172,234 @@ const Game = {
     Save.save(); Hooks.render();
   }
 };
+
+/* ---------- 5b. TRAITS ÉTENDUS (étape 5) ----------
+   Chaque trait est piloté par des compteurs réels (bump) : voir Combat, Explore, Craft, Shop, Quests, Narr, Dungeon.
+   Les effets sont volontairement modestes : un plafond global (EFF_CAP) borne leur cumul.
+   Les traits cachés ne révèlent leur existence qu'après une première progression, et jamais leur recette complète. */
+Object.assign(TCAT, {
+  armes: 'Armes', armures: 'Armures', magie: 'Magie', invocation: 'Invocation', defense: 'Défense', artisanat: 'Artisanat', economie: 'Économie',
+  reputation: 'Réputation', boss: 'Boss', donjons: 'Donjons', evenements: 'Événements', quetes: 'Quêtes', compagnons: 'Compagnons'
+});
+const g_ = (c, n, l) => ({ c, n, l });
+const N_ = (id, n, cat, r, d, goals, eff, x) => TRAITS.push(T(id, n, cat, r, d, goals, eff, x || {}));
+
+/* --- Armes : victoires avec une catégorie d'armes --- */
+[['sword', 'Lame émérite', 'Mille duels à l’épée ont affiné votre garde.', { atkPct: .03, defPct: .02 }],
+ ['greatsword', 'Fléau des armures', 'Une épée à deux mains ne demande pas de finesse, seulement de la conviction.', { penFlat: 4, atkPct: .02 }],
+ ['dagger', 'Main de l’ombre', 'Une dague, un souffle, un adversaire qui tombe.', { critFlat: 3, dodgeFlat: 2 }],
+ ['katana', 'Voie du katana', 'Un seul geste, parfaitement placé.', { critDmg: .1, critFlat: 2 }],
+ ['spear', 'Allonge parfaite', 'Tenir l’ennemi à distance est une forme de sagesse.', { penFlat: 5, spdFlat: 1 }],
+ ['axe', 'Bûcheron de guerre', 'Votre hache a tranché plus de chairs que de bois.', { atkPct: .04 }],
+ ['hammer', 'Briseur d’os', 'On entend vos coups avant de vous voir.', { atkPct: .03, defPct: .02 }],
+ ['bow', 'Œil du chasseur', 'Le vent, la distance, la corde : tout est calculé.', { precFlat: 6, critFlat: 2 }],
+ ['crossbow', 'Tireur d’élite', 'La précision mécanique est votre religion.', { penFlat: 3, critDmg: .1 }],
+ ['staff', 'Disciple du bâton', 'Le bois canalise ce que la volonté ordonne.', { skillPct: .04, mpPct: .03 }],
+ ['wand', 'Virtuose de la baguette', 'Un geste du poignet, un monde qui plie.', { skillPct: .03, mpRegen: 1 }],
+ ['tome', 'Rat de bibliothèque', 'Vos sorts sont annotés dans la marge.', { skillPct: .03, xpPct: .03 }],
+ ['scythe', 'Moissonneur', 'Ce que vous fauchez ne repousse pas.', { lifesteal: .015, onKillMp: 2 }],
+ ['fist', 'Poing d’acier', 'Vos mains sont devenues des armes.', { spdFlat: 1, dodgeFlat: 2, atkPct: .02 }],
+ ['gun', 'Gâchette facile', 'La poudre ne ment jamais.', { critFlat: 2, precFlat: 4 }]
+].forEach(([c, n, d, e]) => N_('tw_' + c, n, 'armes', 1, d, [g_('wb_' + c, 60, `combats gagnés avec ${CAT_NAME[c].toLowerCase()}`)], e));
+
+/* --- Armures --- */
+N_('ta_heavy', 'Cuirassé', 'armures', 1, 'Le poids de l’acier est devenu une seconde nature.', [g_('aw_heavy', 50, 'combats gagnés en plastron lourd')], { defPct: .05, dmgTakenPct: -.02 });
+N_('ta_light', 'Silhouette agile', 'armures', 1, 'Le cuir léger ne freine pas vos mouvements.', [g_('aw_light', 50, 'combats gagnés en cuirasse légère')], { dodgeFlat: 3, spdFlat: 1 });
+N_('ta_cloth', 'Étoffe de mage', 'armures', 1, 'La soie des robes vibre au rythme de votre mana.', [g_('aw_cloth', 50, 'combats gagnés en robe')], { mpPct: .05, skillPct: .03 });
+N_('ta_naked', 'Corps nu', 'armures', 2, 'Qui a besoin de plastron quand on a du courage ?', [g_('nakedWins', 15, 'combats gagnés sans plastron')], { hpPct: .05, dodgeFlat: 2 });
+N_('ta_set', 'Panoplie maîtrisée', 'armures', 2, 'Quatre pièces d’un même ensemble résonnent en harmonie.', [g_('setWins', 30, 'combats gagnés avec 4 pièces d’un ensemble')], { allPct: .02, defPct: .02 });
+N_('ta_legend', 'Porteur de légende', 'armures', 3, 'Des objets légendaires vous reconnaissent pour maître.', [g_('legendWins', 40, 'combats gagnés avec un objet Légendaire ou mieux')], { lootLuck: .05, atkPct: .02 });
+
+/* --- Combat --- */
+N_('tc_crit500', 'Frappe chirurgicale', 'combat', 2, 'Vos coups critiques sont un art.', [g_('crits', 500, 'coups critiques')], { critDmg: .12 });
+N_('tc_killcrit', 'Coup fatal', 'combat', 1, 'Vous achevez d’un trait de génie.', [g_('killsCrit', 100, 'ennemis achevés par un critique')], { critFlat: 2, critDmg: .05 });
+N_('tc_bourreau', 'Bourreau', 'combat', 2, 'Le Finisseur n’a plus de secret pour vous.', [g_('finishers', 50, 'Finisseurs réussis')], { finTh: .05, critDmg: .1 });
+N_('tc_k100', 'Chasseur', 'combat', 0, 'Cent victimes, et ce n’est que le début.', [g_('kills', 100, 'ennemis vaincus')], { atkPct: .02 });
+N_('tc_k500', 'Massacreur', 'combat', 1, 'Cinq cents vaincus. On commence à vous craindre.', [g_('kills', 500, 'ennemis vaincus')], { atkPct: .03, xpPct: .02 });
+N_('tc_k2000', 'Fléau', 'combat', 3, 'Deux mille morts sur la route.', [g_('kills', 2000, 'ennemis vaincus')], { atkPct: .04, goldPct: .03 });
+N_('tc_elite', 'Briseur d’élites', 'combat', 2, 'Les alphas tombent devant vous.', [g_('killsElite', 25, 'élites vaincus')], { dmgBossPct: .05 });
+N_('tc_dmg', 'Force de la nature', 'combat', 2, 'Cent mille points de dégâts infligés.', [g_('dmgDealt', 100000, 'dégâts infligés')], { atkPct: .03 });
+N_('tc_basic', 'Maître du geste simple', 'combat', 1, 'Pas besoin de sorts quand l’attaque de base suffit.', [g_('killsBasic', 150, 'ennemis vaincus par une attaque normale')], { atkPct: .03 });
+N_('tc_streak', 'Implacable', 'combat', 3, 'Cent victimes sans jamais reculer.', [g_('streakBest', 100, 'victimes d’affilée sans fuir')], { atkPct: .03, critFlat: 2 });
+N_('tc_fast', 'Foudroyant', 'combat', 2, 'Le combat se termine avant d’avoir pris forme.', [g_('fastWins', 50, 'victoires en 3 tours ou moins')], { spdFlat: 3 });
+N_('tc_oneshot', 'Coup unique', 'combat', 2, 'Un seul coup suffit à terrasser un ennemi entier.', [g_('oneShots', 10, 'ennemis tués d’un seul coup à pleine vie')], { critDmg: .1 });
+
+/* --- Magie --- */
+[['fire', 'Pyromancien', 'Le feu vous obéit.', { skillPct: .04, hitBurn: .05 }], ['ice', 'Cryomancien', 'Le gel est votre allié.', { skillPct: .04, hitFreeze: .03 }],
+ ['shock', 'Invocateur d’orages', 'La foudre frappe où vous le décidez.', { skillPct: .04, spdFlat: 1 }], ['holy', 'Lumière vengeresse', 'Le sacré purifie, et châtie.', { skillPct: .04, healPct: .04 }],
+ ['dark', 'Seigneur des ombres', 'Les ténèbres sont votre royaume.', { skillPct: .04, lifesteal: .01 }], ['poison', 'Alchimiste toxique', 'Le poison est un art patient.', { skillPct: .03, dotPct: .1 }],
+ ['arcane', 'Arcaniste', 'L’arcane pure, sans fioriture.', { skillPct: .04, mpPct: .03 }]
+].forEach(([el, n, d, e]) => N_('tm_' + el, n, 'magie', 2, d, [g_('ek_' + el, 60, `ennemis vaincus par ${ELEM[el][0].toLowerCase()}`)], e));
+N_('tm_skills', 'Lanceur', 'magie', 1, 'Plus de compétences que d’attaques normales dans votre vie.', [g_('killsSkill', 150, 'ennemis vaincus par une compétence')], { skillPct: .03 });
+N_('tm_pure', 'Pur lanceur', 'magie', 2, 'Gagner sans jamais frapper : seulement des compétences.', [g_('skillOnlyWins', 15, 'combats gagnés uniquement avec des compétences')], { skillPct: .04, mpRegen: 1 });
+N_('tm_mana', 'Source tarie', 'magie', 2, 'Vous avez brûlé bien des réserves de mana.', [g_('manaSpent', 5000, 'mana dépensé')], { mpPct: .05 });
+N_('tm_aoe', 'Tempête', 'magie', 2, 'Vos sorts de zone balaient les rangs.', [g_('aoeUses', 40, 'compétences de zone lancées')], { skillPct: .03, critFlat: 1 });
+N_('tm_virtuose', 'Virtuose', 'magie', 3, 'Cinq cents compétences lancées.', [g_('skillsUsed', 500, 'compétences utilisées')], { skillPct: .05, mpRegen: 2 });
+
+/* --- Invocation --- */
+N_('ti_legion', 'Légion', 'invocation', 2, 'Vos serviteurs ont fait leurs preuves.', [g_('summonKills', 40, 'ennemis vaincus par vos invocations')], { summonPct: .1 });
+N_('ti_cmd', 'Commandant', 'invocation', 2, 'Vous menez vos créatures au combat.', [g_('summonsUsed', 60, 'invocations lancées')], { summonPct: .1, mpPct: .03 });
+N_('ti_triple', 'Triumvirat', 'invocation', 3, 'Trois invocations au même instant.', [g_('tripleSummon', 5, 'fois 3 invocations simultanées')], { summonPct: .15, onKillMp: 2 });
+N_('ti_necro', 'Nécromant accompli', 'invocation', 3, 'Cent rituels, cent légions.', [g_('summonsUsed', 150, 'invocations lancées')], { summonPct: .15 });
+N_('ti_dmg', 'Armée dévastatrice', 'invocation', 2, 'Vos invocations ont infligé 5 000 dégâts.', [g_('summonDmg', 5000, 'dégâts infligés par les invocations')], { summonPct: .1, atkPct: .02 });
+N_('ti_flawless', 'Général prudent', 'invocation', 3, 'Vos troupes combattent, vous restez intact.', [g_('summonFlawless', 5, 'combats gagnés sans dégât avec une invocation active')], { dmgTakenPct: -.03, summonPct: .1 });
+
+/* --- Défense --- */
+N_('td_guard', 'Garde ferme', 'defense', 1, 'Vous savez parer au bon moment.', [g_('defends', 100, 'défenses')], { defendBonus: .06 });
+N_('td_wall', 'Mur', 'defense', 2, 'Cinq mille dégâts arrêtés par votre garde.', [g_('blocked', 5000, 'dégâts évités en vous défendant')], { defPct: .04, defendBonus: .04 });
+N_('td_tank', 'Encaisseur', 'defense', 2, 'Vous avez encaissé des coups qui auraient dû vous coucher.', [g_('bigHits', 10, 'coups à plus de 50 % de vos PV encaissés')], { hpPct: .04, dmgTakenPct: -.02 });
+N_('td_dance', 'Danseur', 'defense', 2, 'Six esquives consécutives : une chorégraphie.', [g_('dodgeStreakBest', 6, 'esquives consécutives (record)')], { dodgeFlat: 3 });
+N_('td_riposte', 'Riposteur', 'defense', 2, 'Chaque coup reçu mérite une réponse.', [g_('counters', 25, 'contre-attaques')], { critFlat: 2, atkPct: .02 });
+N_('td_thorns', 'Hérisson', 'defense', 2, 'Qui vous frappe se blesse.', [g_('thornsDmg', 1500, 'dégâts renvoyés')], { thorns: .1 });
+N_('td_bastion', 'Bastion', 'defense', 2, 'Vos défenses tiennent tout un combat.', [g_('defendWins', 30, 'combats gagnés en vous défendant 5 fois ou plus')], { defPct: .04, hpPct: .03 });
+N_('td_shield', 'Sous protection', 'defense', 1, 'Les boucliers vous ont sauvé la mise.', [g_('shieldAbs', 3000, 'dégâts absorbés par des boucliers')], { dmgTakenPct: -.03 });
+N_('td_dodge300', 'Maître de l’esquive', 'defense', 2, 'Trois cents coups évités.', [g_('dodges', 300, 'esquives réussies')], { dodgeFlat: 4, spdFlat: 1 });
+
+/* --- Survie --- */
+N_('ts_lowhp', 'Funambule du trépas', 'survie', 2, 'Dix victoires aux portes de la mort.', [g_('lowHpWins', 10, 'victoires avec moins de 10 % de PV')], { hpPct: .05, regenPost: .03 });
+N_('ts_potion', 'Alchimiste vivant', 'survie', 2, 'Cent potions bues.', [g_('potions', 100, 'potions utilisées')], { potionPct: .2 });
+N_('ts_healed', 'Soins infinis', 'survie', 2, 'Vingt mille PV rendus.', [g_('healed', 20000, 'PV récupérés')], { healPct: .08, regenPost: .02 });
+N_('ts_nopot', 'Sans filet', 'survie', 3, 'Un boss vaincu sans une seule potion.', [g_('noPotionBoss', 1, 'boss vaincu sans potion')], { hpPct: .03, healPct: .05 });
+N_('ts_clean', 'Sans une égratignure', 'survie', 4, 'Un boss tombé sans vous toucher.', [g_('bossFlawless', 1, 'boss vaincu sans subir de dégâts')], { dodgeFlat: 3, dmgTakenPct: -.03 });
+N_('ts_marathon', 'Marathonien', 'survie', 2, 'Des combats interminables, mais vous tenez.', [g_('longWins', 5, 'combats de 15 tours ou plus gagnés')], { regenTurn: .01, hpPct: .03 });
+N_('ts_angel', 'Ange gardien', 'survie', 3, 'Quinze fois la mort vous a ratée de peu.', [g_('lastStands', 15, 'coups fatals évités')], { hpPct: .04, defendBonus: .05 });
+N_('ts_edge', 'Au bord du gouffre', 'survie', 3, 'Un donjon achevé avec moins de 5 % de PV.', [g_('dungLowHp', 1, 'donjon terminé sous 5 % de PV')], { regenPost: .05, deathMit: .15 });
+N_('ts_ascete', 'Ascète des donjons', 'survie', 3, 'Un donjon entier sans la moindre potion.', [g_('dungNoPotion', 1, 'donjon terminé sans potion')], { hpPct: .03, regenPost: .03 });
+N_('ts_tried', 'Éprouvé', 'survie', 2, 'Cent altérations subies.', [g_('statusTaken', 100, 'altérations subies')], { sresFlat: 8, hpPct: .02 });
+N_('ts_immune', 'Immunisé', 'survie', 3, 'Dix victoires sous trois altérations ou plus.', [g_('cursedWins', 10, 'victoires sous 3 altérations')], { sresFlat: 10, defPct: .03 });
+N_('ts_phoenix', 'Phénix', 'survie', 3, 'Vingt défaites ont forgé votre résilience.', [g_('deaths', 20, 'défaites subies')], { deathMit: .2, hpPct: .04 });
+
+/* --- Exploration --- */
+N_('te_arp', 'Arpenteur', 'exploration', 1, 'Trois cents explorations.', [g_('explorations', 300, 'explorations')], { xpPct: .03, spdFlat: 1 });
+N_('te_night', 'Veilleur nocturne', 'exploration', 2, 'Cent explorations en zone nocturne.', [g_('nightExp', 100, 'explorations de nuit')], { nightAtk: .06, critFlat: 2 });
+N_('te_day', 'Marcheur du jour', 'exploration', 1, 'Cent explorations à la lumière.', [g_('dayExp', 100, 'explorations en zone diurne')], { regenPost: .02, xpPct: .02 });
+N_('te_chests', 'Pilleur de coffres', 'exploration', 2, 'Cinquante coffres ouverts.', [g_('chests', 50, 'coffres ouverts')], { goldPct: .05, lootLuck: .04 });
+N_('te_eagle', 'Œil de rapace', 'exploration', 2, 'Vingt-cinq coffres cachés trouvés.', [g_('hiddenChests', 25, 'coffres cachés découverts')], { lootLuck: .06 });
+N_('te_mimic', 'Méfiant', 'exploration', 2, 'Cinq mimiques tuées : vous ne vous faites plus avoir.', [g_('k_mimique', 5, 'mimiques vaincues')], { dmgTakenPct: -.02, goldPct: .03 });
+N_('te_traps', 'Habitué des pièges', 'exploration', 1, 'Dix pièges déclenchés. Vous avez appris.', [g_('trapsHit', 10, 'pièges déclenchés')], { hpPct: .03, sresFlat: 4 });
+[['plaines', 'Arpenteur des Plaines', { hpPct: .02 }], ['foret', 'Gardien de la Forêt', { regenPost: .02 }], ['marais', 'Enfant du Marais', { sresFlat: 6 }],
+ ['montagne', 'Alpiniste des Cendres', { defPct: .03 }], ['cimetiere', 'Veilleur des Morts', { resDark: .1 }], ['abysses', 'Explorateur des Abysses', { critFlat: 2, lootLuck: .03 }]
+].forEach(([z, n, e]) => N_('tz_' + z, n, 'exploration', 2, `Chaque recoin de ${ZONE(z).n} vous est connu.`, [g_('zx_' + z, 100, `% d’exploration de ${ZONE(z).n}`)], e));
+[['herb', 'Herboriste', 80, { potionPct: .1 }], ['ore', 'Mineur', 80, { defPct: .02, upgBonus: .03 }], ['hide', 'Dépeceur', 60, { dodgeFlat: 1, goldPct: .02 }], ['bone', 'Fossoyeur', 40, { dotPct: .08 }],
+ ['crystal', 'Cristallier', 40, { mpPct: .03, upgBonus: .03 }], ['ember', 'Braconnier de braise', 40, { hitBurn: .03 }], ['ecto', 'Chasseur de spectres', 40, { resDark: .08 }], ['star', 'Chercheur d’étoiles', 15, { lootLuck: .04 }]
+].forEach(([m, n, k, e]) => N_('tr_' + m, n, 'exploration', 1, `Vous avez récolté ${MATS[m][0].toLowerCase()} en quantité.`, [g_('m_' + m, k, `${MATS[m][0].toLowerCase()} récolté(e)`)], e));
+
+/* --- Artisanat --- */
+N_('tk_craft', 'Maître-forgeron', 'artisanat', 2, 'Vingt-cinq équipements sortis de votre atelier.', [g_('crafted', 25, 'équipements fabriqués')], { upgBonus: .05 });
+N_('tk_upg', 'Orfèvre', 'artisanat', 2, 'Cinquante améliorations réussies.', [g_('upgrades', 50, 'améliorations réussies')], { upgBonus: .06, atkPct: .01 });
+N_('tk_max', 'Perfection', 'artisanat', 4, 'Un objet poussé à +10.', [g_('upMax', 1, 'objet amélioré à +10')], { allPct: .02, upgBonus: .05 });
+N_('tk_dism', 'Recycleur', 'artisanat', 1, 'Rien ne se perd.', [g_('dismantled', 50, 'objets démontés')], { upgBonus: .03, goldPct: .02 });
+N_('tk_brew', 'Apothicaire', 'artisanat', 1, 'Trente préparations alchimiques.', [g_('brewed', 30, 'consommables fabriqués')], { potionPct: .15 });
+N_('tk_epic', 'Chef-d’œuvre', 'artisanat', 3, 'Une pièce épique (ou mieux) sortie de l’établi.', [g_('craftEpic', 1, 'équipement Épique+ fabriqué')], { upgBonus: .05, lootLuck: .03 });
+N_('tk_master', 'Artisan maître', 'artisanat', 3, 'Cinq pièces de qualité Maître.', [g_('craftMaster', 5, 'fabrications de qualité Maître')], { upgBonus: .08, allPct: .01 });
+
+/* --- Économie --- */
+N_('tx_rich', 'Banquier', 'economie', 2, 'Cinquante mille pièces gagnées.', [g_('goldEarned', 50000, 'or gagné')], { goldPct: .08 });
+N_('tx_spend', 'Dépensier', 'economie', 1, 'Cinq mille pièces dépensées chez les marchands.', [g_('goldSpent', 5000, 'or dépensé')], { shopDisc: .04 });
+N_('tx_buy', 'Client fidèle', 'economie', 1, 'Trente achats : les marchands vous connaissent.', [g_('bought', 30, 'achats effectués')], { shopDisc: .05 });
+N_('tx_sell', 'Brocanteur', 'economie', 1, 'Cent cinquante objets vendus.', [g_('sold', 150, 'objets vendus')], { goldPct: .04 });
+N_('tx_hold', 'Thésauriseur', 'economie', 2, 'Dix mille pièces en poche.', [g_('gold', 10000, 'or possédé')], { goldPct: .03, lootLuck: .02 });
+N_('tx_rare', 'Œil pour l’éclat', 'economie', 2, 'Vingt-cinq objets rares ou mieux.', [g_('rareDrops', 25, 'objets Rares+ obtenus')], { lootLuck: .06 });
+N_('tx_leg', 'Collectionneur légendaire', 'economie', 3, 'Trois objets légendaires (ou mieux) trouvés.', [g_('legFound', 3, 'objets Légendaires+ trouvés')], { lootLuck: .08, goldPct: .03 });
+N_('tx_myth', 'Touché par le mythe', 'economie', 4, 'Un objet mythique entre vos mains.', [g_('mythFound', 1, 'objet Mythique+ trouvé')], { lootLuck: .1, allPct: .01 });
+
+/* --- Réputation (une carrière par faction + conflits) --- */
+Object.keys(FACTIONS).forEach(f => {
+  const nm = FACTIONS[f][0];
+  const eff1 = { couronne: { defPct: .02, shopDisc: .02 }, cercle: { mpPct: .04 }, ombres: { critFlat: 2, goldPct: .03 }, sylve: { regenPost: .02, resPoison: .08 } }[f];
+  const eff2 = { couronne: { hpPct: .04, dmgTakenPct: -.02 }, cercle: { skillPct: .05 }, ombres: { critDmg: .1, dodgeFlat: 2 }, sylve: { healPct: .06, regenPost: .02 } }[f];
+  N_('tp_' + f + '1', `Honoré par ${nm}`, 'reputation', 2, 'Votre nom est respecté.', [g_('rep_' + f, 100, `réputation ${nm}`)], eff1);
+  N_('tp_' + f + '2', `Allié de ${nm}`, 'reputation', 3, 'Vous faites désormais partie de la maison.', [g_('rep_' + f, 200, `réputation ${nm}`)], eff2);
+  N_('tp_' + f + 'n', `Mal-aimé de ${nm}`, 'reputation', 1, 'Vous vous êtes fait un ennemi.', [g_('repneg_' + f, 50, `méfiance envers ${nm}`)], { dodgeFlat: 2, sresFlat: 4 });
+});
+N_('tp_multi', 'Diplomate polyglotte', 'reputation', 3, 'Deux factions vous honorent.', [g_('factionsHonored', 2, 'factions qui vous honorent')], { shopDisc: .05, xpPct: .03 });
+N_('tp_all', 'Ami de tous', 'reputation', 4, 'Quatre factions vous honorent.', [g_('factionsHonored', 4, 'factions qui vous honorent')], { allPct: .02, shopDisc: .08 });
+
+/* --- Boss --- */
+const BOSS_TRAIT = { gobelin_roi: 'Terreur de Grimgut', araignee_reine: 'Fléau de Shéléa', sorciere: 'Briseur de maléfices', golem_magma: 'Éteigneur de lave', liche: 'Fossoyeur de la Liche', dragon: 'Tueur de dragon', devoreur: 'Vainqueur du Dévoreur' };
+const BOSS_EFF = { gobelin_roi: { atkPct: .02 }, araignee_reine: { resPoison: .1, dodgeFlat: 1 }, sorciere: { sresFlat: 6, resDark: .08 }, golem_magma: { defPct: .03, resFire: .1 }, liche: { resDark: .1, lifesteal: .01 }, dragon: { dmgBossPct: .05, resIce: .1 }, devoreur: { allPct: .02, dmgBossPct: .04 } };
+Object.keys(BOSSES).forEach(id => N_('tb_' + id, BOSS_TRAIT[id], 'boss', 3, `Vous avez abattu ${BOSSES[id].n}.`, [g_('bk_' + id, 1, `${BOSSES[id].n} vaincu`)], BOSS_EFF[id]));
+N_('tb_fast', 'Exécuteur de boss', 'boss', 3, 'Un boss tombé en 4 tours ou moins.', [g_('bossFast', 1, 'boss vaincu en 4 tours ou moins')], { dmgBossPct: .08, spdFlat: 2 });
+N_('tb_fin', 'Coup de grâce royal', 'boss', 3, 'Trois boss achevés d’un Finisseur.', [g_('bossFinisher', 3, 'boss achevés par un Finisseur')], { finTh: .05, critDmg: .1 });
+N_('tb_hunter', 'Chasseur de boss', 'boss', 3, 'Vingt boss vaincus.', [g_('killsBoss', 20, 'boss vaincus')], { dmgBossPct: .08, lootLuck: .04 });
+
+/* --- Donjons --- */
+N_('tdj_10', 'Explorateur de donjons', 'donjons', 1, 'Dix donjons terminés.', [g_('dungeonsDone', 10, 'donjons terminés')], { xpPct: .03 });
+N_('tdj_30', 'Vétéran des donjons', 'donjons', 2, 'Trente donjons terminés.', [g_('dungeonsDone', 30, 'donjons terminés')], { xpPct: .03, lootLuck: .03 });
+N_('tdj_100', 'Maître des donjons', 'donjons', 3, 'Cent donjons terminés.', [g_('dungeonsDone', 100, 'donjons terminés')], { xpPct: .04, lootLuck: .05 });
+N_('tdj_hard', 'Téméraire', 'donjons', 2, 'Cinq donjons terminés en difficile ou plus.', [g_('dungHard', 5, 'donjons Difficile+ terminés')], { atkPct: .02, defPct: .02 });
+N_('tdj_flaw', 'Donjon parfait', 'donjons', 4, 'Un donjon entier sans subir un seul dégât.', [g_('dungFlawless', 1, 'donjon sans aucun dégât')], { dodgeFlat: 3, allPct: .01 });
+N_('tdj_night', 'Cauchemar maîtrisé', 'donjons', 4, 'Cinq donjons terminés en Cauchemar.', [g_('dungNight', 5, 'donjons Cauchemar terminés')], { hpPct: .04, dmgBossPct: .05 });
+
+/* --- Événements --- */
+N_('tv_10', 'Curieux', 'evenements', 1, 'Dix événements vécus.', [g_('events', 10, 'événements vécus')], { xpPct: .02 });
+N_('tv_50', 'Voyageur du destin', 'evenements', 2, 'Cinquante rencontres, autant d’histoires.', [g_('events', 50, 'événements vécus')], { xpPct: .03, lootLuck: .03 });
+N_('tv_ruth', 'Impitoyable', 'evenements', 1, 'Cinq choix cruels.', [g_('ruthless', 5, 'choix cruels')], { critDmg: .06, goldPct: .03 });
+N_('tv_ruth2', 'Sans scrupules', 'evenements', 3, 'Quinze choix cruels : plus de retour en arrière.', [g_('ruthless', 15, 'choix cruels')], { atkPct: .03, critFlat: 2, healPct: -.05 });
+N_('tv_kind', 'Âme noble', 'evenements', 2, 'Quinze actes de bonté.', [g_('kind', 15, 'choix altruistes')], { healPct: .06, regenPost: .02 });
+N_('tv_luck', 'Sourire du sort', 'evenements', 3, 'Cinq issues improbables en votre faveur.', [g_('rareOutcomes', 5, 'issues improbables obtenues')], { lootLuck: .06, critFlat: 1 });
+N_('tv_fight', 'Provocateur', 'evenements', 1, 'Cinq événements qui ont fini en combat.', [g_('evFights', 5, 'événements tournés en combat')], { spdFlat: 1, atkPct: .01 });
+N_('tv_choice', 'Décideur', 'evenements', 2, 'Trente décisions prises.', [g_('choices', 30, 'décisions prises')], { xpPct: .02, shopDisc: .02 });
+
+/* --- Quêtes --- */
+[[3, 'Fil de l’histoire', 1, { xpPct: .02 }], [6, 'Champion de la campagne', 2, { xpPct: .03, atkPct: .02 }], [9, 'Sauveur du royaume', 4, { allPct: .03, xpPct: .03 }]].forEach(([k, n, r, e]) => N_('tq_main' + k, n, 'quetes', r, `${k} quêtes principales accomplies.`, [g_('qt_main', k, 'quêtes principales terminées')], e));
+N_('tq_side5', 'Serviable', 'quetes', 1, 'Cinq quêtes secondaires.', [g_('qt_side', 5, 'quêtes secondaires terminées')], { goldPct: .03 });
+N_('tq_side11', 'Bon à tout faire', 'quetes', 2, 'Onze quêtes secondaires.', [g_('qt_side', 11, 'quêtes secondaires terminées')], { goldPct: .04, xpPct: .02 });
+N_('tq_day10', 'Régulier', 'quetes', 1, 'Dix objectifs quotidiens.', [g_('qt_daily', 10, 'objectifs quotidiens terminés')], { xpPct: .02 });
+N_('tq_day30', 'Fidèle au poste', 'quetes', 2, 'Trente objectifs quotidiens.', [g_('qt_daily', 30, 'objectifs quotidiens terminés')], { xpPct: .03, goldPct: .03 });
+
+/* --- Compagnons --- */
+N_('tk2_b50', 'Équipe soudée', 'compagnons', 1, 'Cinquante combats côte à côte.', [g_('compBattles', 50, 'combats avec un compagnon actif')], { companionPct: .1 });
+N_('tk2_b200', 'Compagnons d’armes', 'compagnons', 2, 'Deux cents combats côte à côte.', [g_('compBattles', 200, 'combats avec un compagnon actif')], { companionPct: .15, defPct: .02 });
+N_('tk2_two', 'Meneur', 'compagnons', 1, 'Deux compagnons recrutés.', [g_('compCount', 2, 'compagnons recrutés')], { xpPct: .02 });
+N_('tk2_four', 'Capitaine', 'compagnons', 3, 'Tous les compagnons actuels vous suivent.', [g_('compCount', 4, 'compagnons recrutés')], { companionPct: .15, allPct: .01 });
+N_('tk2_bond', 'Lien indéfectible', 'compagnons', 3, 'Un lien de 100 avec un compagnon.', [g_('maxBond', 100, 'lien avec un compagnon')], { companionPct: .2, hpPct: .03 });
+N_('tk2_talk', 'Confident', 'compagnons', 1, 'Quinze conversations.', [g_('compTalks', 15, 'discussions avec des compagnons')], { healPct: .03 });
+N_('tk2_gift', 'Généreux', 'compagnons', 1, 'Huit cadeaux offerts.', [g_('compGifts', 8, 'cadeaux offerts')], { goldPct: -.0, xpPct: .02 });
+N_('tk2_kill', 'Duo', 'compagnons', 2, 'Soixante ennemis vaincus par vos compagnons.', [g_('compKills', 60, 'ennemis vaincus par un compagnon')], { companionPct: .1, atkPct: .01 });
+N_('tk2_heal', 'Soigné par un ami', 'compagnons', 2, 'Vingt-cinq soins prodigués par un compagnon.', [g_('compHeals', 25, 'soins de compagnon reçus')], { healPct: .05, regenPost: .02 });
+
+/* --- Malédictions --- */
+N_('tn_blade', 'Pacte de la lame', 'maudit', 3, 'Vingt-cinq victoires avec une arme maudite.', [g_('cursedWpnWins', 25, 'combats gagnés avec une arme maudite')], { atkPct: .04, lifesteal: .01, healPct: -.05 });
+N_('tn_self', 'Sacrifice volontaire', 'maudit', 3, 'Vingt sorts payés de votre propre sang.', [g_('selfHarm', 20, 'sorts qui vous ont blessé')], { skillPct: .05, hpPct: -.03 });
+N_('tn_pois', 'Veines empoisonnées', 'maudit', 2, 'Vingt victoires alors que le poison vous rongeait.', [g_('poisonedWins', 20, 'combats gagnés sous poison')], { resPoison: .2, sresFlat: 6 });
+
+/* --- Traits cachés : plusieurs conditions, recette jamais dévoilée --- */
+const H_ = (id, n, r, d, hint, goals, eff) => N_(id, n, 'secret', r, d, goals, eff, { hidden: true, hint });
+H_('th_solo', 'Loup solitaire', 4, 'Vous n’avez besoin de personne.', 'Combattre seul, de préférence quand la nuit tombe.', [g_('soloWins', 60, 'combats gagnés seul'), g_('nightKills', 40, 'victimes nocturnes')], { atkPct: .04, critFlat: 3, dodgeFlat: 3 });
+H_('th_shadowhunt', 'Chasseur d’ombres', 4, 'Rien n’échappe à votre vigilance.', 'Traquer les puissants dans l’obscurité, sans se faire toucher.', [g_('killsElite', 15, 'élites vaincus'), g_('nightKills', 60, 'victimes nocturnes'), g_('dodges', 150, 'esquives')], { critFlat: 3, dodgeFlat: 4, nightAtk: .08 });
+H_('th_aesthete', 'Esthète du tranchant', 4, 'La beauté d’un coup parfait.', 'Un katana, des critiques, et l’art d’achever.', [g_('wb_katana', 40, 'victoires au katana'), g_('crits', 300, 'critiques'), g_('finishers', 15, 'Finisseurs')], { critDmg: .2, critFlat: 3 });
+H_('th_madalch', 'Alchimiste fou', 3, 'Entre génie et folie.', 'Préparer, boire, empoisonner.', [g_('brewed', 40, 'préparations'), g_('potions', 60, 'potions bues'), g_('statusApplied', 100, 'altérations infligées')], { potionPct: .25, dotPct: .15 });
+H_('th_silent', 'Gardien silencieux', 4, 'Il protège sans bruit.', 'Se défendre, épargner, ne jamais être touché.', [g_('defendWins', 20, 'combats défensifs'), g_('pacified', 8, 'apaisements'), g_('flawlessWins', 20, 'combats sans dégât')], { dmgTakenPct: -.05, defendBonus: .08, peaceBonus: .15 });
+H_('th_voice', 'Voix du Cercle', 4, 'Les arcanes vous écoutent.', 'Lancer des sorts en servant le Cercle.', [g_('skillsUsed', 300, 'compétences'), g_('rep_cercle', 150, 'réputation Cercle'), g_('manaSpent', 3000, 'mana dépensé')], { skillPct: .08, mpPct: .06, mpRegen: 2 });
+H_('th_ghost', 'Fantôme des donjons', 5, 'Vous traversez les donjons comme un souffle.', 'Des donjons parfaits, sans potion, aux difficultés croissantes.', [g_('dungFlawless', 2, 'donjons parfaits'), g_('dungNoPotion', 2, 'donjons sans potion'), g_('dungHard', 3, 'donjons Difficile+')], { dodgeFlat: 4, allPct: .02, firstStrike: true });
+H_('th_forest', 'Âme de la forêt', 4, 'La forêt vous a adopté.', 'Épargner, cueillir, honorer la Sylve.', [g_('pacified', 15, 'apaisements'), g_('rep_sylve', 150, 'réputation Sylve'), g_('m_herb', 100, 'herbes récoltées')], { healPct: .08, regenPost: .04, resPoison: .15 });
+H_('th_smuggler', 'Contrebandier', 4, 'Un pied dans l’ombre, un pied au marché.', 'Servir les Ombres, vendre beaucoup, ne pas avoir de scrupules.', [g_('rep_ombres', 150, 'réputation Ombres'), g_('sold', 80, 'objets vendus'), g_('ruthless', 8, 'choix cruels')], { goldPct: .08, lootLuck: .05, critFlat: 2 });
+H_('th_chaos', 'Fils du chaos', 5, 'Le chaos vous reconnaît pour sien.', 'Se blesser en lançant des sorts, survivre aux malédictions, tenter sa chance.', [g_('selfHarm', 15, 'sorts douloureux'), g_('cursedWins', 5, 'victoires maudites'), g_('rareOutcomes', 3, 'issues improbables')], { skillPct: .08, critDmg: .15, extraTurn: .03 });
+
+/* --- Légendaires --- */
+N_('tl_arch', 'Archi-légende', 'maudit', 5, 'Sept boss, un siècle de gloire.', [g_('bossesDistinct', 7, 'boss différents vaincus'), g_('level', 100, 'niveau'), g_('traitsCount', 80, 'traits éveillés')], { allPct: .03, dmgBossPct: .08 });
+N_('tl_100', 'Éveil total', 'maudit', 5, 'Cent traits éveillés.', [g_('traitsCount', 100, 'traits éveillés')], { allPct: .03, xpPct: .05 });
+N_('tl_150', 'Maître absolu', 'maudit', 6, 'Cent cinquante traits : nul n’en a jamais autant.', [g_('traitsCount', 150, 'traits éveillés')], { allPct: .04, lootLuck: .08 });
+N_('tl_250', 'Apogée vivante', 'maudit', 6, 'Le niveau maximal est atteint.', [g_('level', 250, 'niveau')], { allPct: .03, dmgBossPct: .06 });
+N_('tl_k5000', 'Fléau des mondes', 'maudit', 5, 'Cinq mille ennemis vaincus.', [g_('kills', 5000, 'ennemis vaincus')], { atkPct: .04, critDmg: .1 });
+N_('tl_par', 'Âme transcendante', 'maudit', 6, 'Vingt niveaux de Paragon.', [g_('paragonLevels', 20, 'niveaux de Paragon')], { allPct: .03, xpPct: .05 });
+
+/* --- Synergies supplémentaires --- */
+SYNERGIES.push(
+  { ids: ['tm_fire', 'tm_ice'], n: 'Équilibre des extrêmes', d: '+6 % dégâts de compétence, +3 % chance d’altération', eff: { skillPct: .06, statusChance: .03 } },
+  { ids: ['tw_dagger', 'esquiveur'], n: 'Lame insaisissable', d: '+3 % esquive, +3 % critique', eff: { dodgeFlat: 3, critFlat: 3 } },
+  { ids: ['ta_heavy', 'td_wall'], n: 'Forteresse ambulante', d: '−4 % dégâts subis, +6 % défense', eff: { dmgTakenPct: -.04, defPct: .06 } },
+  { ids: ['ti_legion', 'ti_triple'], n: 'Armée des morts', d: '+25 % puissance des invocations', eff: { summonPct: .25 } },
+  { ids: ['tk_craft', 'tk_upg'], n: 'Légende de la forge', d: '+12 % réussite d’amélioration', eff: { upgBonus: .12 } },
+  { ids: ['tx_rich', 'tx_hold'], n: 'Fortune assise', d: '+8 % or, +4 % butin', eff: { goldPct: .08, lootLuck: .04 } },
+  { ids: ['tk2_b200', 'tk2_bond'], n: 'Inséparables', d: '+25 % puissance des compagnons', eff: { companionPct: .25 } },
+  { ids: ['tp_couronne2', 'tp_ombres2'], n: 'Double jeu', d: '+5 % or, +4 % critique', eff: { goldPct: .05, critFlat: 4 } },
+  { ids: ['tn_blade', 'maudit'], n: 'Lame et malédiction', d: '+6 % attaque, +2 % vol de vie', eff: { atkPct: .06, lifesteal: .02 } },
+  { ids: ['ts_clean', 'tb_fast'], n: 'Chasseur chirurgical', d: '+10 % dégâts contre les boss', eff: { dmgBossPct: .10 } },
+  { ids: ['tc_basic', 'tc_killcrit'], n: 'Simplicité mortelle', d: '+4 % attaque, +3 % critique', eff: { atkPct: .04, critFlat: 3 } },
+  { ids: ['te_night', 'te_day'], n: 'Cycle complet', d: '+3 % XP, +2 % PV après combat', eff: { xpPct: .03, regenPost: .02 } }
+);
 
 /* ---------- 6. COMPÉTENCES ---------- */
 /* active : fx décrit l'effet ; passive : eff multiplié par le rang (max 3).
@@ -1263,7 +1508,7 @@ const Combat = {
     const C = this.C = {
       ctx, enemies: ctx.enemies, target: 0, round: 0, log: [], fx: [], over: false, res: null, defending: false, buffs: [], st: {}, cd: {},
       summons: [], corpses: 0, dmgTaken: 0, minHpPct: G.p.hp / S.maxHp, maxSt: 0, usedFin: false, revived: false, shield: 0, shieldT: 0,
-      order: [], idx: 0, comp: { cd: 0 }, extra: false, summary: null
+      order: [], idx: 0, comp: { cd: 0 }, extra: false, summary: null, basicUsed: false, skillUsed: false, potionsUsed: 0, defCount: 0, dodgeStreak: 0, hadSummon: false, summonDmg: 0
     };
     this.log(`⚔ ${C.enemies.map(e => `${e.n} (niv. ${e.lvl})`).join(', ')} !`, 'sys');
     Save.save();
@@ -1319,7 +1564,7 @@ const Combat = {
   damagePlayer(dmg, raw) {
     const C = this.C, S = Stats.get(), E = Stats.sum();
     dmg = Math.max(0, Math.round(dmg));
-    if (C.shield > 0 && dmg > 0) { const a = Math.min(C.shield, dmg); C.shield -= a; dmg -= a; this.log(`🛡 Le rempart absorbe ${a} dégâts.`, 'good'); }
+    if (C.shield > 0 && dmg > 0) { const a = Math.min(C.shield, dmg); C.shield -= a; dmg -= a; bump('shieldAbs', a); this.log(`🛡 Le rempart absorbe ${a} dégâts.`, 'good'); }
     if (dmg <= 0) return 0;
     if (C.defending && raw >= G.p.hp && dmg < G.p.hp) { bump('lastStands'); this.log('🛡 Votre garde vous sauve d’un coup fatal !', 'good'); }
     G.p.hp -= dmg; C.dmgTaken += dmg; bump('dmgTaken', dmg);
@@ -1334,7 +1579,7 @@ const Combat = {
   inflict(st, e) { // altération infligée au joueur
     const [id, ch, t] = st, S = Stats.get(), sd = STATUS[id], C = this.C;
     if (!chance(ch * (1 - S.sres / 100))) return;
-    const cur = C.st[id]; C.st[id] = { t: Math.max(t, cur ? cur.t : 0), pow: Math.max(1, e.atk * .22) };
+    const cur = C.st[id]; C.st[id] = { t: Math.max(t, cur ? cur.t : 0), pow: Math.max(1, e.atk * .22) }; bump('statusTaken');
     this.log(`${sd.i} Vous subissez ${sd.n} !`, 'status');
     C.maxSt = Math.max(C.maxSt, Object.keys(C.st).length);
   },
@@ -1368,17 +1613,20 @@ const Combat = {
     let raw = e.atk * (1 + e.buffAtk) * sk.m * rnd(.9, 1.1) * mitig(defV, S.lvl);
     if (magic) raw *= 1 - clamp(E['res' + sk.el.charAt(0).toUpperCase() + sk.el.slice(1)] || 0, -.5, .75);
     const dodge = clamp((S.dodge + this.buff('dodge') * 100) / 100, 0, .6);
-    if (chance(dodge)) { bump('dodges'); this.log(`💨 Vous esquivez ${sk.n} de ${e.n} !`, 'good'); this.fx('p', 0, 'Esquive', 'miss'); return; }
+    if (chance(dodge)) { bump('dodges'); C.dodgeStreak++; G.c.dodgeStreakBest = Math.max(G.c.dodgeStreakBest || 0, C.dodgeStreak); this.log(`💨 Vous esquivez ${sk.n} de ${e.n} !`, 'good'); this.fx('p', 0, 'Esquive', 'miss'); return; }
     if (chance(.05)) raw *= 1.5;
     raw *= clamp(1 + (E.dmgTakenPct || 0), .25, 1.5);
     let fin = raw; if (C.defending) fin *= clamp(.5 - (E.defendBonus || 0), .2, .5);
+    if (C.defending) bump('blocked', Math.max(0, Math.round(raw - fin)));
+    C.dodgeStreak = 0;
     const dealt = this.damagePlayer(fin, raw);
+    if (dealt >= S.maxHp * .5 && G.p.hp > 0) bump('bigHits');
     this.log(`${e.i} ${e.n} — ${sk.n} : −${dealt} PV${C.defending ? ' (garde)' : ''}`, 'hit');
     if (C.over) return;
     if (sk.drain && dealt > 0) { const h = Math.round(dealt * sk.drain); e.hp = Math.min(e.maxHp, e.hp + h); this.log(`🩸 ${e.n} draine ${h} PV.`); }
     if (sk.mpDrain) { const l = Player.restoreMp(-Math.round(S.maxMp * sk.mpDrain)); if (l) this.log(`🔻 ${e.n} aspire votre mana.`); }
     if (dealt > 0 || sk.m < 1) { if (sk.st) this.inflict(sk.st, e); if (sk.st2) this.inflict(sk.st2, e); }
-    if (E.thorns && dealt > 0 && !e.dead) { const t = Math.max(1, Math.round(dealt * E.thorns)); this.log(`🌵 Épines : ${t} dégâts renvoyés.`); this.hurtEnemy(e, t, { by: 'thorns' }); }
+    if (E.thorns && dealt > 0 && !e.dead) { const t = Math.max(1, Math.round(dealt * E.thorns)); bump('thornsDmg', t); this.log(`🌵 Épines : ${t} dégâts renvoyés.`); this.hurtEnemy(e, t, { by: 'thorns' }); }
     if (C.counter && dealt > 0 && !e.dead && !C.over) { bump('counters'); this.log('↩ Contre-attaque !', 'good'); this.strike(e, C.counter.m, {}); }
   },
   estimate(e) {
@@ -1388,7 +1636,7 @@ const Combat = {
 
   /* --- Dégâts infligés par le joueur --- */
   hurtEnemy(e, dmg, o = {}) {
-    dmg = Math.max(1, Math.round(dmg)); e.hp -= dmg; bump('dmgDealt', dmg);
+    dmg = Math.max(1, Math.round(dmg)); if (e.hp === e.maxHp && dmg >= e.maxHp && o.by === 'player') bump('oneShots'); e.hp -= dmg; bump('dmgDealt', dmg);
     this.fx('e', this.C.enemies.indexOf(e), (o.crit ? '✦' : '-') + dmg, o.crit ? 'crit' : 'dmg');
     if (e.hp <= 0) this.killEnemy(e, o); else this.checkPhase(e);
     return dmg;
@@ -1404,7 +1652,7 @@ const Combat = {
     raw *= (1 + bonus) * mitig(e.def * (1 - S.pen / 100), e.lvl) * (1 - clamp(e.res[o.el || 'phys'] || 0, -1, .9));
     const crit = o.crit || chance((S.crit + (o.critBonus || 0) + this.buff('crit')) / 100);
     if (crit) { raw *= 1.6 + (E.critDmg || 0); bump('crits'); }
-    const dmg = this.hurtEnemy(e, raw, { crit, by: 'player' });
+    const dmg = this.hurtEnemy(e, raw, { crit, by: 'player', el: o.el || 'phys', skill: !!o.skill, fin: !!o.fin });
     this.log(`${crit ? '💥 Critique ! ' : ''}Vous infligez ${dmg} dégâts à ${e.n}${(e.res[o.el || 'phys'] || 0) < -.2 ? ' (faiblesse !)' : (e.res[o.el || 'phys'] || 0) > .3 ? ' (résiste)' : ''}.`, crit ? 'crit' : 'hit');
     if (E.lifesteal && dmg > 0) { const h = Player.heal(dmg * E.lifesteal * (1 + (E.healPct || 0))); if (h) this.fx('p', 0, '+' + h, 'heal'); }
     if (!e.dead) {
@@ -1447,6 +1695,8 @@ const Combat = {
     if (e.tier === 'elite') bump('killsElite');
     if (e.boss) { bump('killsBoss'); bump('bk_' + e.tpl); if (e.lvl >= G.p.lvl + 4) bump('giantKills'); }
     if (o.dot) bump('dotKills');
+    if (o.by === 'summon') bump('summonKills'); if (o.by === 'ally') bump('compKills');
+    if (o.by === 'player') { if (o.el) bump('ek_' + o.el); if (o.skill) bump('killsSkill'); else bump('killsBasic'); if (o.crit) bump('killsCrit'); if (o.fin && e.boss) bump('bossFinisher'); }
     if (o.by === 'player' && G.eq.weapon && G.eq.weapon.cat) { G.c.wcats = G.c.wcats || {}; G.c.wcats[G.eq.weapon.cat] = 1; }
     if (E.onKillMp) Player.restoreMp(E.onKillMp);
   },
@@ -1457,7 +1707,7 @@ const Combat = {
     for (const s of C.summons) {
       if (C.over || s.t <= 0) continue; const e = this.tgtAny(); if (!e) break;
       const d = S.atk * s.pow * (1 + (E.summonPct || 0)) * rnd(.9, 1.1) * mitig(e.def, e.lvl);
-      this.log(`💀 ${s.n} attaque ${e.n}.`); this.hurtEnemy(e, d, { by: 'summon' }); s.t--;
+      this.log(`💀 ${s.n} attaque ${e.n}.`); bump('summonDmg', Math.round(d)); this.hurtEnemy(e, d, { by: 'summon' }); s.t--;
     }
     C.summons = C.summons.filter(s => s.t > 0);
     if (G.active && G.comp[G.active] && this.alive.length) Companions.act(G.active, C);
@@ -1476,10 +1726,10 @@ const Combat = {
     if (!C.extra && chance(E.extraTurn || 0)) { C.extra = true; this.log('⚡ Tour supplémentaire !', 'good'); Hooks.combatRender(); return; }
     C.extra = false; C.idx++; this.run();
   },
-  attack() { if (!this.ready()) return; this.strike(this.tgt(), 1, {}); this.finishAction(); },
+  attack() { if (!this.ready()) return; this.C.basicUsed = true; this.strike(this.tgt(), 1, {}); this.finishAction(); },
   defend() {
     if (!this.ready()) return; const C = this.C, S = Stats.get();
-    C.defending = true; bump('defends'); const m = Player.restoreMp(S.maxMp * .08);
+    C.defending = true; C.defCount++; bump('defends'); const m = Player.restoreMp(S.maxMp * .08);
     this.log(`🛡 Vous vous mettez en garde (dégâts réduits)${m ? `, +${m} mana` : ''}.`, 'good'); this.finishAction();
   },
   skill(id) {
@@ -1488,7 +1738,8 @@ const Combat = {
     if (C.cd[id] > 0) { Hooks.toast('Compétence en recharge.', 'bad'); return; }
     const cost = Skills.cost(id); if (G.p.mp < cost) { Hooks.toast('Mana insuffisant.', 'bad'); return; }
     const rank = G.sk[id], aug = G.aug[id], S = Stats.get(), E = Stats.sum(), f = d.fx;
-    G.p.mp -= cost; const cd = Skills.cdOf(id); C.cd[id] = cd > 0 ? cd + 1 : 0;
+    G.p.mp -= cost; bump('manaSpent', cost); C.skillUsed = true; if (f.aoe) bump('aoeUses'); if (f.selfDmg) bump('selfHarm');
+    const cd = Skills.cdOf(id); C.cd[id] = cd > 0 ? cd + 1 : 0;
     const pm = (1 + .2 * (rank - 1)) * (aug === 'power' ? 1.25 : 1);
     bump('skillsUsed'); this.log(`✨ ${d.n}${rank > 1 ? ' ' + rank : ''}`, 'skill');
     switch (f.k) {
@@ -1517,7 +1768,7 @@ const Combat = {
       }
       case 'summon': {
         for (let i = 0; i < f.cnt; i++) C.summons.push({ n: f.n, t: f.t, pow: f.pow * pm });
-        bump('summonsUsed'); this.log(`💀 ${f.cnt > 1 ? f.cnt + ' ' + f.n + 's' : 'Un ' + f.n.toLowerCase()} surgit${f.cnt > 1 ? 'ssent' : ''} du sol !`, 'good'); break;
+        bump('summonsUsed'); C.hadSummon = true; if (C.summons.length >= 3) bump('tripleSummon'); this.log(`💀 ${f.cnt > 1 ? f.cnt + ' ' + f.n + 's' : 'Un ' + f.n.toLowerCase()} surgit${f.cnt > 1 ? 'ssent' : ''} du sol !`, 'good'); break;
       }
       case 'focus': {
         const m = Player.restoreMp(S.maxMp * f.mpf * pm); C.buffs.push({ k: 'crit', v: 100, t: 2 }); this.log(`🧘 Concentration : +${m} mana, prochaine attaque critique.`, 'good'); break;
@@ -1533,11 +1784,11 @@ const Combat = {
     if (!this.ready() || !this.finisherReady()) return; const C = this.C, th = .3 + (Stats.sum().finTh || 0);
     let e = this.tgt(); if (e.hp / e.maxHp > th) e = this.alive.find(x => x.hp / x.maxHp <= th);
     C.usedFin = true; bump('finishers'); this.log('🗡 FINISSEUR !', 'crit');
-    this.strike(e, 2.6, { sure: true, crit: true }); this.finishAction();
+    this.strike(e, 2.6, { sure: true, crit: true, fin: true }); this.finishAction();
   },
   useItem(id) {
     if (!this.ready() || (G.cons[id] || 0) <= 0) return; const C = this.C, S = Stats.get(), E = Stats.sum(), c = CONS[id];
-    if (id === 'potion_hp' || id === 'potion_hp2') { const h = Player.heal(S.maxHp * c.f * (1 + (E.potionPct || 0) + (E.healPct || 0))); this.log(`🧪 ${c.n} : +${h} PV.`, 'good'); this.fx('p', 0, '+' + h, 'heal'); bump('potions'); }
+    if (id === 'potion_hp' || id === 'potion_hp2') { const h = Player.heal(S.maxHp * c.f * (1 + (E.potionPct || 0) + (E.healPct || 0))); this.log(`🧪 ${c.n} : +${h} PV.`, 'good'); this.fx('p', 0, '+' + h, 'heal'); bump('potions'); C.potionsUsed++; if (Dungeon.D) Dungeon.D.potions++; }
     else if (id === 'potion_mp') { const m = Player.restoreMp(S.maxMp * c.f * (1 + (E.potionPct || 0))); this.log(`💧 ${c.n} : +${m} mana.`, 'good'); bump('potions'); }
     else if (id === 'antidote') { C.st = {}; this.log('🍵 Vous êtes purifié de toute altération.', 'good'); }
     else if (id === 'bomb') {
@@ -1578,6 +1829,17 @@ const Combat = {
     for (const k in mats) Mats.add(k, mats[k]);
     for (const k in cons) G.cons[k] = (G.cons[k] || 0) + cons[k];
     bump('battlesWon');
+    const wc = G.eq.weapon && G.eq.weapon.cat; if (wc) bump('wb_' + wc);
+    const ch = G.eq.chest; if (!ch) bump('nakedWins'); else bump({ 'Plastron': 'aw_heavy', 'Cuirasse légère': 'aw_light', 'Robe': 'aw_cloth' }[ch.base] || 'aw_other');
+    const setN = {}; for (const sl of EQ_SLOTS) { const it = G.eq[sl]; if (it && it.set) setN[it.set] = (setN[it.set] || 0) + 1; }
+    if (Object.values(setN).some(n => n >= 4)) bump('setWins');
+    if (Object.values(G.eq).some(i => i && i.r >= 4)) bump('legendWins');
+    if (G.eq.weapon && G.eq.weapon.kind === 'maudite') bump('cursedWpnWins');
+    if (!G.active && !C.hadSummon) bump('soloWins'); if (G.active) bump('compBattles');
+    if (C.skillUsed && !C.basicUsed) bump('skillOnlyWins'); if (C.defCount >= 5) bump('defendWins'); if (C.round >= 15) bump('longWins');
+    if (C.st.poison) bump('poisonedWins'); if (C.summons.length && C.dmgTaken === 0) bump('summonFlawless');
+    if (C.enemies.some(e => e.boss)) { if (C.dmgTaken === 0) bump('bossFlawless'); if (!C.potionsUsed) bump('noPotionBoss'); if (C.round <= 4) bump('bossFast'); }
+    if (Dungeon.D) { Dungeon.D.dmg += C.dmgTaken; Dungeon.D.minHp = Math.min(Dungeon.D.minHp, C.minHpPct); }
     if (G.p.hp > 0 && C.minHpPct < .10) bump('lowHpWins');
     if (C.dmgTaken === 0) bump('flawlessWins');
     if (C.round <= 3) bump('fastWins');
@@ -1808,8 +2070,8 @@ const Narr = {
     const ev = NARR.find(e => e.id === evId), ch = ev.ch[i];
     if (!this.canPay(ch.need)) return null;
     if (ch.need) { if (ch.need.cons) G.cons[ch.need.cons]--; if (ch.need.gold) G.p.gold -= ch.need.gold; if (ch.need.mats) Mats.take(ch.need.mats); }
-    G.seenEv[evId] = (G.seenEv[evId] || 0) + 1; bump('choices');
-    const o = wpick(ch.out, x => x.p), d = o.do, lines = [];
+    G.seenEv[evId] = (G.seenEv[evId] || 0) + 1; bump('choices'); bump('events');
+    const o = wpick(ch.out, x => x.p), d = o.do, lines = []; if (ch.out.length > 1 && o.p <= .35) bump('rareOutcomes'); if (d.fight) bump('evFights');
     const rr = Object.assign({}, d); delete rr.hp; delete rr.mp; delete rr.c; delete rr.flag; delete rr.fight;
     lines.push(...Game.reward(rr));
     const S = Stats.get();
@@ -1851,7 +2113,7 @@ const Explore = {
     const Z = ZONE(zid); if (!Z) return null;
     if (G.p.lvl < Z.min - 1) return { msg: 'Cette zone est bien trop dangereuse pour le moment.' };
     const S = Stats.get(), zs = G.zones[zid] || (G.zones[zid] = { ex: 0 }), was = zs.ex;
-    zs.ex = Math.min(100, zs.ex + 4); bump('explorations'); Player.heal(S.maxHp * .02);
+    zs.ex = Math.min(100, zs.ex + 4); bump('explorations'); bump(Z.night ? 'nightExp' : 'dayExp'); Player.heal(S.maxHp * .02);
     let res = { msg: '' };
     const k = wpick([{ k: 'enc', w: 42 }, { k: 'chest', w: 11 }, { k: 'gather', w: 15 }, { k: 'good', w: 9 }, { k: 'bad', w: 8 }, { k: 'narr', w: 11 }], x => x.w).k;
     if (k === 'enc') { const g = this.group(Z); res = { msg: 'Une rencontre !', encounter: g, zone: Z }; }
@@ -1871,7 +2133,7 @@ const Explore = {
     }
     else if (k === 'bad') {
       const r = rint(0, 2);
-      if (r === 0) { const d = Math.max(1, Math.min(G.p.hp - 1, Math.round(S.maxHp * rnd(.08, .18)))); G.p.hp -= d; res = { msg: `🪤 Un piège se referme sur vous : −${d} PV.` }; }
+      if (r === 0) { bump('trapsHit'); const d = Math.max(1, Math.min(G.p.hp - 1, Math.round(S.maxHp * rnd(.08, .18)))); G.p.hp -= d; res = { msg: `🪤 Un piège se referme sur vous : −${d} PV.` }; }
       else if (r === 1) { const g = Math.min(G.p.gold, Math.round(G.p.gold * .08)); G.p.gold -= g; res = { msg: `🦝 Un voleur vous délaisse de ${g} or.` }; }
       else { const m = Math.round(G.p.mp * .4); G.p.mp -= m; res = { msg: `🌫️ Un brouillard étrange vous draine : −${m} mana.` }; }
     }
@@ -1906,7 +2168,7 @@ const Dungeon = {
   diffOK(d, i) { return i === 0 || !!(G.dung[d.id] && G.dung[d.id][i - 1]); },
   start(id, diff) {
     const d = DUNGEON(id); if (!d || G.flags.inCombat || !this.avail(d) || !this.diffOK(d, diff)) return;
-    this.D = { id, diff, stage: 0 }; G.flags.dungeon = id; this.next();
+    this.D = { id, diff, stage: 0, dmg: 0, minHp: 1, potions: 0 }; G.flags.dungeon = id; this.next();
   },
   next() {
     const D = this.D, d = DUNGEON(D.id), B = BOSSES[d.boss], Z = ZONE(d.zone), off = DIFFS[D.diff].off, st = d.stages[D.stage], bl = B.lvl + off, en = [];
@@ -1935,7 +2197,7 @@ const Dungeon = {
     const D = this.D, d = DUNGEON(D.id), B = BOSSES[d.boss], df = DIFFS[D.diff], E = Stats.sum(), lines = [];
     G.dung[d.id] = G.dung[d.id] || {}; const first = !G.dung[d.id][D.diff]; G.dung[d.id][D.diff] = true;
     if (D.diff === 2) { bump('dungNight'); if (d.boss === 'devoreur') bump('bk_devoreur_n'); }
-    bump('dungeonsDone');
+    bump('dungeonsDone'); if (D.diff >= 1) bump('dungHard'); if (D.dmg === 0) bump('dungFlawless'); if (D.minHp < .05) bump('dungLowHp'); if (!D.potions) bump('dungNoPotion');
     const g = Math.round(B.lvl * 40 * df.rew * (peace ? .5 : 1) * (1 + (E.goldPct || 0))); Player.gold(g); lines.push(`+${fmt(g)} or`);
     const n = peace ? 1 : 1 + D.diff + (first ? 1 : 0);
     for (let i = 0; i < n; i++) { const it = genItem({ ilvl: B.lvl + df.off + 2, minR: 2 + D.diff, luck: (E.lootLuck || 0) + .1 * D.diff, boss: true }); Inv.add(it, 'drop'); lines.push(`Butin : ${it.name} (${RARITIES[it.r].n})`); }
@@ -1977,12 +2239,12 @@ const Companions = {
   },
   talk(id) {
     const c = G.comp[id]; if (!c || c.talk === today()) return null;
-    c.talk = today(); c.bond += 3; const L = COMPS[id].lines; Game.sync();
+    c.talk = today(); c.bond += 3; bump('compTalks'); const L = COMPS[id].lines; Game.sync();
     return L[c.bond >= 60 ? 2 : c.bond >= 20 ? 1 : 0];
   },
   gift(id) {
     const c = G.comp[id], cost = G.p.lvl * 20; if (!c || G.p.gold < cost) return false;
-    G.p.gold -= cost; c.bond += 5; Game.sync(); return true;
+    G.p.gold -= cost; c.bond += 5; bump('compGifts'); Game.sync(); return true;
   },
   act(id, C) {
     const d = COMPS[id], c = G.comp[id], S = Stats.get(), E = Stats.sum(), sk = d.skill;
@@ -1993,7 +2255,7 @@ const Companions = {
     if (ready) {
       C.comp.cd = sk.cd;
       if (sk.k === 'dmg') for (let i = 0; i < (sk.hits || 1); i++) { const e = Combat.tgtAny(); if (!e) break; Combat.allyHit(e, atk * sk.m, `${d.i} ${d.n} (${sk.n})`); }
-      else if (sk.k === 'heal') { const h = Player.heal(S.maxHp * sk.m * (1 + (E.healPct || 0))); Combat.log(`✚ ${d.n} — ${sk.n} : +${h} PV.`, 'ally'); Combat.fx('p', 0, '+' + h, 'heal'); }
+      else if (sk.k === 'heal') { const h = Player.heal(S.maxHp * sk.m * (1 + (E.healPct || 0))); bump('compHeals'); Combat.log(`✚ ${d.n} — ${sk.n} : +${h} PV.`, 'ally'); Combat.fx('p', 0, '+' + h, 'heal'); }
       else if (sk.k === 'shield') { C.shield = Math.round(S.maxHp * sk.m * (1 + c.lvl * .01)); C.shieldT = 3; Combat.log(`🛡 ${d.n} — ${sk.n} : bouclier de ${C.shield}.`, 'ally'); }
       else if (sk.k === 'poison') { for (const e of Combat.alive) Combat.applyEnemy(e, 'poison', 4, 1); Combat.log(`☠ ${d.n} — ${sk.n} sur tous les ennemis.`, 'ally'); }
     } else if (d.basic) { const e = Combat.tgtAny(); if (e) Combat.allyHit(e, atk * .6, `${d.i} ${d.n} attaque`); }
@@ -2015,7 +2277,7 @@ const Craft = {
     if (G.p.gold < c.gold || !Mats.has(c.mats)) return null;
     G.p.gold -= c.gold; Mats.take(c.mats); bump('goldSpent', c.gold);
     const E = Stats.sum(), it = genItem({ ilvl: G.p.lvl + q, slot, luck: QUAL[q].luck + (E.upgBonus || 0) * 2, minR: QUAL[q].minR, noCat: true });
-    Inv.add(it, 'craft'); bump('crafted'); Game.sync(); return it;
+    Inv.add(it, 'craft'); bump('crafted'); if (it.r >= 3) bump('craftEpic'); if (q === 2) bump('craftMaster'); Game.sync(); return it;
   },
   upgCost(it) {
     const u = it.up, need = { ore: 2 + u }; if (u >= 3) need.crystal = u - 2; if (u >= 7) need.star = 1;
@@ -2028,7 +2290,7 @@ const Craft = {
     G.p.gold -= c.gold; Mats.take(c.mats); bump('goldSpent', c.gold);
     let res = { ok: false, msg: '' };
     if (chance(this.upgRate(it) / 100)) {
-      it.up++; res.ok = true; res.msg = `Succès ! ${it.name} passe à +${it.up}.`; bump('upgrades');
+      it.up++; res.ok = true; res.msg = `Succès ! ${it.name} passe à +${it.up}.`; bump('upgrades'); if (it.up === 10) bump('upMax');
       if ([3, 6, 9].includes(it.up)) {
         const k = pick(STAT_POOL), v = Math.max(1, Math.round((4 + it.ilvl * 1.6) * AFF[k] * 1.2)); it.xtra[k] = (it.xtra[k] || 0) + v;
         res.msg += ` Bonus spécial : +${v} ${STAT_LABEL[k]}.`;
@@ -2060,7 +2322,7 @@ const Shop = {
   buy(id) {
     const list = [...G.shop.items, ...(G.shop.rare || [])], it = list.find(x => x.id === id); if (!it) return false;
     const p = buyPrice(it); if (G.p.gold < p || G.inv.length >= Inv.MAX) return false;
-    G.p.gold -= p; bump('goldSpent', p);
+    G.p.gold -= p; bump('goldSpent', p); bump('bought');
     G.shop.items = G.shop.items.filter(x => x.id !== id); G.shop.rare = (G.shop.rare || []).filter(x => x.id !== id);
     Inv.add(it, 'shop'); Game.sync(); return true;
   },
@@ -2069,10 +2331,10 @@ const Shop = {
 };
 
 /* ---------- 10. INTERFACE ---------- */
-const U = { screen: 'title', tab: 'town', zone: 'plaines', sel: null, invF: 'all', traitCat: 'all', craftTab: 'forge', shopTab: 'forge', cmenu: null, exLog: [], cr: { name: '', portrait: 0, sex: 'x', origin: 'aldra', bg: 'orphelin', diff: 'normal', cls: 'guerrier', style: 'offensif', weapon: 0 }, enc: null, ev: null, compMsg: {}, forgeSlot: 'weapon', forgeQ: 0, upSel: null, tipCache: {}, invQ: '', invR: 'all', invS: 'rarity', invDir: 1, selMode: false, selSet: new Set(), invTab: 'bag', autoR: 1 };
+const U = { screen: 'title', tab: 'town', zone: 'plaines', sel: null, invF: 'all', traitCat: 'all', craftTab: 'forge', shopTab: 'forge', cmenu: null, exLog: [], cr: { name: '', portrait: 0, sex: 'x', origin: 'aldra', bg: 'orphelin', diff: 'normal', cls: 'guerrier', style: 'offensif', weapon: 0 }, enc: null, ev: null, compMsg: {}, forgeSlot: 'weapon', forgeQ: 0, upSel: null, tipCache: {}, invQ: '', invR: 'all', invS: 'rarity', invDir: 1, selMode: false, selSet: new Set(), invTab: 'bag', autoR: 1, traitQ: '', traitF: 'all' };
 const $id = id => document.getElementById(id);
 const TABS = [['town', '🏰', 'Ville'], ['explore', '🧭', 'Explorer'], ['char', '👤', 'Héros'], ['inv', '🎒', 'Inventaire'], ['skills', '✨', 'Compétences'], ['traits', '🌟', 'Traits'], ['quests', '📜', 'Quêtes'], ['comp', '🤝', 'Compagnons'], ['craft', '🔨', 'Artisanat'], ['shop', '💰', 'Marché'], ['stats', '🏆', 'Succès'], ['rep', '👑', 'Renommée'], ['opts', '⚙️', 'Options']];
-const TRAIT_ICON = { combat: '⚔️', survie: '❤️', exploration: '🧭', equipement: '🛡️', social: '🤝', secret: '🌑', maudit: '☠️' };
+const TRAIT_ICON = { combat: '⚔️', survie: '❤️', exploration: '🧭', equipement: '🛡️', social: '🤝', secret: '🌑', maudit: '☠️', armes: '🗡️', armures: '🧱', magie: '🔮', invocation: '💀', defense: '🛡️', artisanat: '🔨', economie: '🪙', reputation: '👑', boss: '🐉', donjons: '🏰', evenements: '🎲', quetes: '📜', compagnons: '🤝' };
 
 const bar = (cur, max, cls, label) => `<div class="bar ${cls}" role="progressbar" aria-valuenow="${Math.round(cur)}" aria-valuemax="${Math.round(max)}"><i style="width:${clamp(max ? cur / max * 100 : 0, 0, 100)}%"></i><span>${label || `${fmt(cur)} / ${fmt(max)}`}</span></div>`;
 const rcls = r => 'r-' + RARITIES[r].id;
@@ -2345,20 +2607,41 @@ V.skills = () => {
     ${[['Arbre de classe — ' + CLASS(G.p.cls).n, G.p.cls], ['Arbre commun (toutes classes)', 'all']].map(([t, c]) => `<div class="panel"><h3>${t}</h3><div class="tiers">${tiers.map(ti => { const l = tree.filter(s => s.cls === c && s.tier === ti); return l.length ? `<div class="tier"><div class="tier-h">${ti === 0 ? 'Spéciale' : 'Palier ' + ti}</div>${l.map(card).join('')}</div>` : ''; }).join('')}</div></div>`).join('')}`;
 };
 
-V.traits = () => {
-  const cats = [['all', 'Tous'], ...Object.entries(TCAT)], list = TRAITS.filter(t => U.traitCat === 'all' || t.cat === U.traitCat);
-  const un = TRAITS.filter(t => Traits.has(t.id)).length;
-  const card = t => {
-    const s = G.tr[t.id] || {}, u = s.u, masked = t.hidden && !s.seen && !u, R = RARITIES[t.r], ratio = u ? 1 : masked ? 0 : Traits.ratio(t);
-    return `<div class="trait ${u ? 'on' : ''} ${masked ? 'masked' : ''} ${rcls(t.r)}">${ring(ratio, u ? R.c : '#8d86a6', masked ? '?' : TRAIT_ICON[t.cat])}
-      <div class="tr-b"><b>${masked ? '???' : esc(t.n)}</b><small>${TCAT[t.cat]} · ${R.n}${t.hidden ? ' · caché' : ''}</small>
+function traitState(t) {
+  const s = G.tr[t.id] || {}, u = s.u, masked = t.hidden && !s.seen && !u, ratio = u ? 1 : masked ? 0 : Traits.ratio(t);
+  return { s, u, masked, ratio, state: u ? 'on' : masked ? 'hidden' : ratio > 0 ? 'prog' : 'locked' };
+}
+function traitCardHtml(t) {
+  const { s, u, masked, ratio, state } = traitState(t), R = RARITIES[t.r];
+  const label = { on: '✔ Éveillé', hidden: 'Caché', prog: 'En cours', locked: 'Verrouillé' }[state];
+  return `<div class="trait ${u ? 'on' : ''} ${masked ? 'masked' : ''} ${rcls(t.r)}">${ring(ratio, u ? R.c : '#8d86a6', masked ? '?' : TRAIT_ICON[t.cat])}
+      <div class="tr-b"><b>${masked ? '???' : esc(t.n)}</b><small>${TCAT[t.cat]} · ${R.n} · ${label}${!masked && ratio > 0 && !u ? ` · ${Math.round(ratio * 100)} %` : ''}</small>
       <p>${masked ? 'Un trait dort quelque part. Explorez, combattez, faites des choix…' : esc(t.d)}</p>
       ${masked ? '' : t.hidden && !u ? `<p class="hint">${esc(t.hint)}</p>${goalLines(t.g, true)}` : goalLines(t.g, false)}
-      ${masked ? '' : `<div class="eff ${u ? 'good' : ''}">${u ? '✔ Éveillé — ' : 'Effet : '}${effText(t.eff).join(', ')}</div>`}</div></div>`;
-  };
-  return `<h2>Journal des traits <small>${un} / ${TRAITS.length}</small></h2><div class="row wrap filters">${cats.map(([k, n]) => `<button class="btn sm ${U.traitCat === k ? 'primary' : ''}" data-act="traitCat" data-c="${k}">${n}</button>`).join('')}</div>
-    <div class="grid traits">${list.map(card).join('')}</div>
-    <div class="panel"><h3>Synergies</h3>${SYNERGIES.map(s => { const on = s.ids.every(Traits.has), names = s.ids.map(id => { const t = TRAIT(id), sn = G.tr[id] || {}; return t.hidden && !sn.seen && !sn.u ? '???' : t.n; }); return `<div class="syn ${on ? 'on' : ''}"><b>${on ? '✔' : '○'} ${s.n}</b><small>${names.join(' + ')} — ${s.d}</small></div>`; }).join('')}</div>`;
+      ${masked ? '' : `<div class="eff ${u ? 'good' : ''}">${u ? '✔ Actif — ' : 'Effet : '}${effText(t.eff).join(', ')}</div>`}</div></div>`;
+}
+function traitListHtml() {
+  const q = U.traitQ.trim().toLowerCase();
+  let l = TRAITS.filter(t => {
+    const st = traitState(t);
+    if (U.traitCat !== 'all' && t.cat !== U.traitCat) return false;
+    if (U.traitF !== 'all' && st.state !== U.traitF && !(U.traitF === 'locked' && st.state === 'hidden')) return false;
+    if (q && (st.masked || !(t.n.toLowerCase().includes(q) || t.d.toLowerCase().includes(q)))) return false;
+    return true;
+  });
+  l.sort((a, b) => traitState(b).ratio - traitState(a).ratio);
+  return l.map(traitCardHtml).join('') || '<em>Aucun trait ne correspond.</em>';
+}
+UI.refreshTraits = () => { const g = $id('traitgrid'); if (g) g.innerHTML = traitListHtml(); else UI.renderGame(); };
+V.traits = () => {
+  const cats = [['all', 'Tous'], ...Object.entries(TCAT)], un = TRAITS.filter(t => Traits.has(t.id)).length;
+  const per = {}; for (const t of TRAITS) { per[t.cat] = per[t.cat] || [0, 0]; per[t.cat][1]++; if (Traits.has(t.id)) per[t.cat][0]++; }
+  return `<h2>Journal des traits <small>${un} / ${TRAITS.length}</small></h2>
+    <div class="row wrap"><input id="trq" data-bind="trq" type="search" placeholder="Rechercher un trait…" value="${esc(U.traitQ)}" aria-label="Rechercher un trait">
+      <select data-act="traitF" aria-label="État">${[['all', 'Tous les états'], ['on', 'Éveillés'], ['prog', 'En cours'], ['locked', 'Verrouillés / cachés']].map(([k, n]) => `<option value="${k}" ${U.traitF === k ? 'selected' : ''}>${n}</option>`).join('')}</select></div>
+    <div class="row wrap filters">${cats.map(([k, n]) => `<button class="btn sm ${U.traitCat === k ? 'primary' : ''}" data-act="traitCat" data-c="${k}">${n}${k !== 'all' && per[k] ? ` ${per[k][0]}/${per[k][1]}` : ''}</button>`).join('')}</div>
+    <div class="grid traits" id="traitgrid">${traitListHtml()}</div>
+    <div class="panel"><h3>Synergies <small>${SYNERGIES.filter(s => s.ids.every(Traits.has)).length} / ${SYNERGIES.length} actives</small></h3>${SYNERGIES.map(s => { const on = s.ids.every(Traits.has), names = s.ids.map(id => { const t = TRAIT(id), sn = G.tr[id] || {}; return t.hidden && !sn.seen && !sn.u ? '???' : t.n; }); return `<div class="syn ${on ? 'on' : ''}"><b>${on ? '✔' : '○'} ${s.n}</b><small>${names.join(' + ')} — ${s.d}</small></div>`; }).join('')}</div>`;
 };
 
 V.quests = () => {
@@ -2467,7 +2750,7 @@ const Act = {
   sell(d) { const it = Inv.find(d.id); if (!it || it.lock) return; if ((it.fav || it.r >= 4) && !confirm(`Vendre ${it.name} (${RARITIES[it.r].n}) pour ${fmt(sellPrice(it))} or ?`)) return; const p = Inv.sell(d.id); U.sel = null; U.selSet.delete(d.id); UI.renderGame(); if (p) UI.toast(`Vendu pour ${fmt(p)} or.`); },
   invF(d) { U.invF = d.f; UI.renderGame(); },
   learn(d) { Skills.learn(d.id); }, aug(d) { Skills.setAug(d.id, d.a); }, respec() { if (confirm('Réinitialiser toutes les compétences ? Les points sont rendus (coût en or).')) Skills.respec(); },
-  traitCat(d) { U.traitCat = d.c; UI.renderGame(); },
+  traitCat(d) { U.traitCat = d.c; UI.renderGame(); }, traitF(d, el) { U.traitF = el.value; UI.renderGame(); },
   compRecruit(d) { Companions.recruit(d.id); }, compActive(d) { Companions.setActive(d.id); },
   compTalk(d) { const l = Companions.talk(d.id); if (l) U.compMsg[d.id] = l; UI.renderGame(); }, compGift(d) { if (Companions.gift(d.id)) U.compMsg[d.id] = '« Oh… merci. Vraiment. »'; UI.renderGame(); },
   craftTab(d) { U.craftTab = d.t; UI.renderGame(); }, forgeSlot(d) { U.forgeSlot = d.s; UI.renderGame(); }, forgeQ(d) { U.forgeQ = +d.q; UI.renderGame(); },
@@ -2538,7 +2821,8 @@ function initUI() {
     if (el.disabled) return; const f = Act[el.dataset.act]; if (f) f(el.dataset, el);
   });
   document.addEventListener('change', e => { const el = e.target.closest('input[data-act], select[data-act]'); if (el && Act[el.dataset.act]) Act[el.dataset.act](el.dataset, el); });
-  document.addEventListener('input', e => { if (e.target.dataset.bind === 'name') U.cr.name = e.target.value; if (e.target.dataset.bind === 'invq') { U.invQ = e.target.value; UI.refreshInv(); } });
+  document.addEventListener('input', e => { if (e.target.dataset.bind === 'name') U.cr.name = e.target.value; if (e.target.dataset.bind === 'trq') { U.traitQ = e.target.value; UI.refreshTraits(); }
+    if (e.target.dataset.bind === 'invq') { U.invQ = e.target.value; UI.refreshInv(); } });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$id('modal').classList.contains('hidden') && !(Combat.C && Combat.C.over)) UI.closeModal(); });
   // Infobulles
   const tip = $id('tooltip');
@@ -2553,3 +2837,818 @@ function initUI() {
   UI.title();
 }
 document.addEventListener('DOMContentLoaded', initUI);
+
+/* =====================================================================
+   MODES DE JEU
+   1 RPG tour par tour (Explorer) · 2 Donjons explorables (ce fichier) · 3 Aventure temps réel (p10)
+   4 Minage (p9) · 5 Forge en mini-jeu (ce fichier)
+   Tous partagent le même personnage, la même sauvegarde et les mêmes compteurs de traits.
+   ===================================================================== */
+
+/* ---------- MODE 2 : DONJONS EXPLORABLES ----------
+   Le donjon est une carte de salles à embranchements (5 couches). Le joueur choisit son chemin :
+   combat, élite, coffre, piège, événement, feu de camp (checkpoint) puis boss. La carte est sauvegardée. */
+const DN_ICON = { n: '⚔️', e: '💀', c: '🎁', r: '🔥', v: '❓', t: '🪤', b: '👑' };
+const DN_NAME = { n: 'Combat', e: 'Élite', c: 'Coffre', r: 'Feu de camp', v: 'Événement', t: 'Piège', b: 'Boss' };
+Object.assign(Dungeon, {
+  set(D) { this.D = D; G.flags.dstate = D; G.flags.dungeon = D ? D.id : null; },
+  build(d, diff) {
+    const layers = [], L = 5; let id = 0;
+    const pickK = w => wpick(Object.keys(w), k => w[k]);
+    for (let l = 0; l < L; l++) {
+      const n = l === L - 1 ? 1 : l === 0 ? 2 : rint(2, 3), row = [];
+      for (let i = 0; i < n; i++) row.push({ id: id++, l, i, k: 'n', done: false, next: [] });
+      layers.push(row);
+    }
+    for (let l = 0; l < L - 1; l++) {
+      const A = layers[l], B = layers[l + 1], hasIn = new Set();
+      for (const a of A) {
+        const base = Math.round(a.i * (B.length - 1) / Math.max(A.length - 1, 1)), t = new Set([base]);
+        if (chance(.5) && B.length > 1) t.add(clamp(base + (chance(.5) ? 1 : -1), 0, B.length - 1));
+        for (const j of t) { a.next.push(B[j].id); hasIn.add(B[j].id); }
+      }
+      for (const b of B) if (!hasIn.has(b.id)) pick(A).next.push(b.id);
+    }
+    layers[0][0].k = 'n'; layers[0][1].k = chance(.35) ? 'c' : 'n';
+    for (const x of layers[1]) x.k = pickK({ n: 4, v: 2, c: 2, t: 2 });
+    for (const x of layers[2]) x.k = pickK({ n: 3, e: 2, r: 2, v: 2, c: 1 });
+    for (const x of layers[3]) x.k = pickK({ e: 3, n: 2, r: 1, v: 2, t: 1 });
+    layers[4][0].k = 'b';
+    const mid = [...layers[2], ...layers[3]];
+    if (!mid.some(x => x.k === 'r')) pick(layers[2]).k = 'r';
+    if (!mid.some(x => x.k === 'e')) pick(layers[3]).k = 'e';
+    return layers.flat();
+  },
+  start(id, diff) {
+    const d = DUNGEON(id); if (!d || G.flags.inCombat || this.D || !this.avail(d) || !this.diffOK(d, diff)) return;
+    this.set({ id, diff, nodes: this.build(d, diff), at: -1, cp: -1, dmg: 0, minHp: 1, potions: 0, log: [`Vous entrez dans ${d.n}.`], pend: null });
+    bump('dungeonEntries'); Game.sync(); Hooks.dungeonMap();
+  },
+  node(id) { return this.D.nodes.find(n => n.id === id); },
+  reachable() {
+    const D = this.D, cur = D.at >= 0 ? this.node(D.at) : null;
+    return D.nodes.filter(n => !n.done && (cur ? cur.next.includes(n.id) : n.l === 0));
+  },
+  visible(n) { const D = this.D, cur = D.at >= 0 ? this.node(D.at) : null; return n.done || n.l <= (cur ? cur.l + 1 : 0) || n.k === 'b' && cur && cur.l >= 2; },
+  say(m) { this.D.log.push(m); if (this.D.log.length > 8) this.D.log.shift(); },
+  lvl() { const D = this.D, d = DUNGEON(D.id); return BOSSES[d.boss].lvl + DIFFS[D.diff].off; },
+  foes(kind) {
+    const D = this.D, d = DUNGEON(D.id), Z = ZONE(d.zone), bl = this.lvl(), en = [];
+    if (kind === 'n') { const c = rint(1, 3); for (let i = 0; i < c; i++) en.push(Enemies.make(pick(Z.enemies), bl - 2)); }
+    else if (kind === 'e') en.push(Enemies.make(pick(Z.enemies), bl - 1, 'elite'));
+    else en.push(Enemies.make(d.boss, bl));
+    return en;
+  },
+  enter(id) {
+    const D = this.D; if (!D || G.flags.inCombat) return;
+    const n = this.node(id); if (!n || !this.reachable().includes(n)) return;
+    D.pend = id; bump('dungeonNodes'); const d = DUNGEON(D.id), Z = ZONE(d.zone), S = Stats.get();
+    if (n.k === 'n' || n.k === 'e' || n.k === 'b') {
+      if (n.k === 'b' && this.canNegotiate(n)) { Hooks.dungeonNegotiate(); return; }
+      this.fight(n);
+    } else if (n.k === 'c') {
+      let lines = Explore.chest(Z); bump('roomChests');
+      if (chance(.25)) { const dm = Math.max(1, Math.min(G.p.hp - 1, Math.round(S.maxHp * .12))); G.p.hp -= dm; bump('trapsHit'); lines.push(`Coffre piégé : −${dm} PV`); }
+      this.say(`🎁 Coffre : ${lines.join(', ')}`); this.done(n);
+    } else if (n.k === 'r') {
+      Player.heal(S.maxHp * .4); Player.restoreMp(S.maxMp * .3); D.cp = n.id; bump('campfires'); this.say('🔥 Vous vous reposez au feu de camp (checkpoint).'); this.done(n);
+    } else if (n.k === 't') {
+      const ok = chance(clamp(.35 + S.agi * .01 + S.prec / 200, .2, .9));
+      if (ok) { Player.addXp(Math.round(10 * Math.pow(this.lvl(), 1.3))); bump('trapsDisarmed'); this.say('🪤 Vous désamorcez le piège avec adresse.'); }
+      else { const dm = Math.max(1, Math.min(G.p.hp - 1, Math.round(S.maxHp * .12))); G.p.hp -= dm; bump('trapsHit'); this.say(`🪤 Le piège se déclenche : −${dm} PV.`); }
+      this.done(n);
+    } else if (n.k === 'v') {
+      const ev = Narr.pick(Z);
+      if (!ev) { Mats.add(pick(Z.mats), 2); this.say('Rien d’intéressant… vous récoltez quelques matériaux.'); this.done(n); }
+      else { U.ev = ev.id; U.dungEv = true; Hooks.dungeonEvent(); return; }
+    }
+    Game.sync(); Hooks.dungeonMap();
+  },
+  fight(n) {
+    const D = this.D, d = DUNGEON(D.id);
+    Combat.start({ enemies: this.foes(n.k), canFlee: false, zone: d.zone, kind: 'dungeon', rewMul: DIFFS[D.diff].rew, onEnd: res => this.afterNode(res) });
+  },
+  done(n) { const D = this.D; n.done = true; D.at = n.id; D.pend = null; },
+  afterNode(res) {
+    const D = this.D; if (!D) return; const n = this.node(D.pend);
+    if (res === 'win' && n) {
+      this.done(n); const S = Stats.get(); Player.heal(S.maxHp * .08); this.say(`✔ ${DN_NAME[n.k]} terminé.`);
+      if (n.k === 'b') { this.complete(false); return; }
+    } else if (res !== 'win') {
+      if (D.cp >= 0) { const S = Stats.get(); D.at = D.cp; D.pend = null; G.p.hp = Math.max(G.p.hp, Math.round(S.maxHp * .4)); this.say('☠ Vous vous réveillez au dernier feu de camp.'); }
+      else { this.set(null); Game.sync(); return; }
+    }
+    Game.sync(); Hooks.dungeonMap();
+  },
+  afterEvent(fight) {
+    const D = this.D; if (!D) return; const n = this.node(D.pend); U.dungEv = false;
+    if (fight) { Narr.startFight(fight, res => this.afterNode(res)); return; }
+    if (n) { this.done(n); this.say('❓ L’événement se conclut.'); }
+    Game.sync(); Hooks.dungeonMap();
+  },
+  canNegotiate(n) { const D = this.D; return !!(D && DUNGEON(D.id).boss === 'gobelin_roi' && n && n.k === 'b' && G.flags.gobelinSpared && (G.rep.sylve || 0) >= 10); },
+  negotiate() {
+    const D = this.D, n = this.node(D.pend); if (!this.canNegotiate(n)) return;
+    bump('pacified'); bump('bk_gobelin_roi'); G.bosses.gobelin_roi = G.bosses.gobelin_roi || 'peace'; G.flags.grokMet = true; addRep('sylve', 10);
+    this.done(n); this.complete(true);
+  },
+  leave() { if (!this.D) return; this.say('Vous quittez le donjon.'); this.set(null); Game.sync(); },
+  complete(peace) {
+    const D = this.D, d = DUNGEON(D.id), B = BOSSES[d.boss], df = DIFFS[D.diff], E = Stats.sum(), lines = [];
+    G.dung[d.id] = G.dung[d.id] || {}; const first = !G.dung[d.id][D.diff]; G.dung[d.id][D.diff] = true;
+    if (D.diff === 2) { bump('dungNight'); if (d.boss === 'devoreur') bump('bk_devoreur_n'); }
+    bump('dungeonsDone'); if (D.diff >= 1) bump('dungHard'); if (D.dmg === 0) bump('dungFlawless'); if (D.minHp < .05) bump('dungLowHp'); if (!D.potions) bump('dungNoPotion');
+    const g = Math.round(B.lvl * 40 * df.rew * (peace ? .5 : 1) * (1 + (E.goldPct || 0))); Player.gold(g); lines.push(`+${fmt(g)} or`);
+    const n = peace ? 1 : 1 + D.diff + (first ? 1 : 0);
+    for (let i = 0; i < n; i++) { const it = genItem({ ilvl: B.lvl + df.off + 2, minR: 2 + D.diff, luck: (E.lootLuck || 0) + .1 * D.diff, boss: true }); Inv.add(it, 'drop'); lines.push(`Butin : ${it.name} (${RARITIES[it.r].n})`); }
+    addRep('couronne', 3 + D.diff * 2); if (peace) lines.push('Le Roi Gobelin se retire sans combattre. Grok souhaite vous suivre.');
+    const name = d.n, dn = df.n; this.set(null); Game.sync();
+    Hooks.dungeonDone({ name, diff: dn, lines, peace });
+  }
+});
+Object.assign(Hooks, { dungeonMap() { }, dungeonEvent() { }, dungeonNegotiate() { } });
+Narr.startFight = function (f, onEnd) {
+  const Z = ZONE(Dungeon.D ? DUNGEON(Dungeon.D.id).zone : U_zone()), lvl = Dungeon.D ? Dungeon.lvl() : clamp(G.p.lvl, Z.min, Z.max), en = [];
+  for (let i = 0; i < (f.n || 1); i++) en.push(Enemies.make(f.tpl, lvl, f.elite ? 'elite' : undefined));
+  Combat.start({ enemies: en, canFlee: !f.noFlee && !Dungeon.D, zone: Z.id, kind: Dungeon.D ? 'dungeon' : 'event', onWin: f.win ? () => Game.reward(f.win) : null, onEnd: onEnd || (() => { }) });
+};
+
+/* ---------- MODE 5 : FORGE EN MINI-JEU ----------
+   Trois frappes à timing. Le score (0-100) module la qualité : rareté, statistiques, bonus spécial.
+   Les plans s'obtiennent en démontant un objet du catalogue ; ils permettent de refabriquer cet objet nommé. */
+Object.assign(Craft, {
+  namedCost(key) {
+    const e = Catalog.byKey(key), m = {}, t = DISMANTLE[e.r];
+    for (const k in t) m[k] = t[k] * 2; if (e.r >= 4) m.star = (m.star || 0) + 2;
+    return { gold: Math.round((6 + e.lv * 3) * RARITIES[e.r].p * 1.4), mats: m };
+  },
+  specCost(spec) { return spec.key ? this.namedCost(spec.key) : this.forgeCost(spec.slot, spec.q); },
+  finishForge(spec, score) {
+    if (G.flags.inCombat) return null; const c = this.specCost(spec);
+    if (G.p.gold < c.gold || !Mats.has(c.mats)) return null;
+    G.p.gold -= c.gold; Mats.take(c.mats); bump('goldSpent', c.gold);
+    const E = Stats.sum(); let it;
+    if (spec.key) { const e = Catalog.byKey(spec.key); it = Catalog.make(e, Math.max(e.lv, G.p.lvl)); }
+    else it = genItem({ ilvl: G.p.lvl + spec.q, slot: spec.slot, luck: QUAL[spec.q].luck + (E.upgBonus || 0) * 2 + score / 100 * .5, minR: QUAL[spec.q].minR + (score >= 95 ? 1 : 0), noCat: true });
+    const mult = .85 + score / 100 * .35; for (const k in it.b0) it.b0[k] = Math.max(1, Math.round(it.b0[k] * mult));
+    recalcItem(it);
+    if (score >= 95) { const k = pick(STAT_POOL), v = Math.max(1, Math.round((4 + it.ilvl * 1.6) * AFF[k] * 1.2)); it.xtra[k] = (it.xtra[k] || 0) + v; recalcItem(it); bump('forgePerfect'); }
+    Inv.add(it, 'craft'); bump('crafted'); bump('forges'); if (it.r >= 3) bump('craftEpic'); if (spec.q === 2) bump('craftMaster');
+    Game.sync(); return it;
+  }
+});
+const Forge = {
+  st: null, raf: 0,
+  start(spec) {
+    const c = Craft.specCost(spec);
+    if (G.p.gold < c.gold || !Mats.has(c.mats)) { UI.toast('Ressources insuffisantes.', 'bad'); return; }
+    this.st = { spec, round: 0, scores: [], pos: 0, dir: 1, speed: .9, tgt: .5, hw: .11, done: false, last: 0 };
+    this.nextRound(); UI.modal(this.html()); this.loop(performance.now());
+  },
+  nextRound() { const s = this.st; s.tgt = rnd(.28, .72); s.hw = [.11, .08, .055][s.round] || .05; s.speed = .9 + s.round * .5; s.pos = 0; s.dir = 1; },
+  html() {
+    const s = this.st, c = Craft.specCost(s.spec), e = s.spec.key && Catalog.byKey(s.spec.key);
+    return `<h3>🔨 Forge ${e ? '— ' + esc(e.n) : ''}</h3><p><small>Frappez quand le curseur est dans la zone dorée. 3 frappes, de plus en plus rapides. Espace ou bouton.</small></p>
+      <div class="forgebar" id="fg-bar"><div class="fz" id="fg-zone" style="left:${(s.tgt - s.hw) * 100}%;width:${s.hw * 200}%"></div><div class="fm" id="fg-mark"></div></div>
+      <div class="row between"><span>Frappe ${Math.min(s.round + 1, 3)} / 3</span><span id="fg-sc">${s.scores.map(x => Math.round(x)).join(' · ')}</span></div>
+      <p><small>Coût : ${fmt(c.gold)} or · ${Object.keys(c.mats).map(k => `${MATS[k][1]}${c.mats[k]}`).join(' ')} (payé à la fin)</small></p>
+      <div class="row"><button class="btn primary big" data-act="forgeHit">🔨 Frapper !</button><button class="btn" data-act="forgeCancel">Annuler</button></div>`;
+  },
+  loop(now) {
+    const s = this.st; if (!s || s.done) return;
+    if (!document.getElementById('fg-mark')) { this.st = null; return; }
+    const dt = Math.min(.05, (now - (s.last || now)) / 1000); s.last = now;
+    s.pos += s.dir * s.speed * dt; if (s.pos >= 1) { s.pos = 1; s.dir = -1; } if (s.pos <= 0) { s.pos = 0; s.dir = 1; }
+    document.getElementById('fg-mark').style.left = s.pos * 100 + '%';
+    this.raf = requestAnimationFrame(t => this.loop(t));
+  },
+  scoreOf(pos, tgt, hw) { const d = Math.abs(pos - tgt); if (d <= hw * .3) return 100; if (d <= hw) return 100 - (d - hw * .3) / (hw * .7) * 30; return Math.max(0, 70 - (d - hw) * 260); },
+  hit() {
+    const s = this.st; if (!s || s.done) return;
+    s.scores.push(this.scoreOf(s.pos, s.tgt, s.hw)); s.round++;
+    if (s.round >= 3) { s.done = true; cancelAnimationFrame(this.raf); this.finish(); return; }
+    this.nextRound(); UI.modal(this.html()); this.loop(performance.now());
+  },
+  finish(auto) {
+    const s = this.st, score = auto ? 50 : s.scores.reduce((a, b) => a + b, 0) / s.scores.length, it = Craft.finishForge(s.spec, score); this.st = null;
+    if (!it) { UI.modal('<h3>Échec</h3><p>Ressources insuffisantes.</p><button class="btn" data-act="closeModal">Fermer</button>'); return; }
+    const verdict = score >= 95 ? '✨ Frappe parfaite ! Bonus spécial ajouté.' : score >= 75 ? 'Excellent travail.' : score >= 50 ? 'Du bon ouvrage.' : score >= 25 ? 'Quelques défauts…' : 'Un travail bâclé.';
+    UI.modal(`<h3>Forgé !</h3><p>Score : <b>${Math.round(score)}</b> / 100 — ${verdict}</p><div class="itemgrid">${itemCard(it, 'select')}</div><div class="row"><button class="btn primary" data-act="closeModal">Super</button></div>`);
+  },
+  cancel() { if (this.st) { this.st.done = true; cancelAnimationFrame(this.raf); this.st = null; } UI.closeModal(); }
+};
+
+/* ---------- MODE 4 : MINAGE ----------
+   Grille 9 × 60. On creuse au pic : chaque coup coûte 1 énergie. Les blocs deviennent plus durs avec la profondeur
+   et exigent une pioche de rang suffisant. Les minerais restent dans le sac jusqu'à la remontée à la surface.
+   Dangers : lave, éboulements, embuscades (qui lancent un vrai combat au tour par tour). La mine est sauvegardée. */
+const MINE_W = 9, MINE_H = 60;
+const MINE_BANDS = [
+  { to: 8, hard: 4, tier: 1, ores: [['ore', .14], ['bone', .03], ['herb', .03]], gold: .04, name: 'Galeries superficielles' },
+  { to: 20, hard: 8, tier: 2, ores: [['ore', .10], ['crystal', .07], ['bone', .03]], gold: .05, name: 'Roche profonde' },
+  { to: 35, hard: 14, tier: 3, ores: [['crystal', .09], ['ember', .08], ['ecto', .04]], gold: .06, name: 'Cavernes de braise' },
+  { to: 60, hard: 22, tier: 4, ores: [['ember', .08], ['star', .07], ['crystal', .07], ['ecto', .05]], gold: .07, name: 'Cœur d’obsidienne' }
+];
+const mineBand = y => MINE_BANDS.find(b => y <= b.to) || MINE_BANDS[3];
+const MINE_ICON = { stone: '🪨', gold: '🪙', lava: '🌋', chest: '🎁', empty: '' };
+const Mine = {
+  newState() { return { tier: 1, lamp: 1, bag: {}, bagGold: 0, run: null }; },
+  st() { if (!G.mine) G.mine = this.newState(); return G.mine; },
+  cap() { return 40 + this.st().tier * 10; },
+  bagCount() { return Object.values(this.st().bag).reduce((a, b) => a + b, 0); },
+  maxEnergy() { const S = Stats.get(); return 40 + Math.floor(S.end / 2) + this.st().tier * 4; },
+  power() { const S = Stats.get(); return 2 + this.st().tier * 3 + Math.floor(S.str / 12); },
+  gen() {
+    const cells = [];
+    for (let y = 0; y <= MINE_H; y++) for (let x = 0; x < MINE_W; x++) {
+      if (y === 0) { cells.push({ t: 'empty', hp: 0, max: 0, seen: 1 }); continue; }
+      const b = mineBand(y); let t = 'stone', o = null, r = Math.random();
+      if (y > 9 && r < .025) t = 'lava';
+      else if ((r -= .025) < .015) t = 'chest';
+      else if ((r -= .015) < b.gold) t = 'gold';
+      else { for (const [m, p] of b.ores) { if ((r -= p) < 0) { t = 'ore'; o = m; break; } } }
+      const hp = t === 'lava' ? 9999 : Math.round(b.hard * (t === 'ore' ? 1.3 : t === 'chest' ? 1.6 : 1) * rnd(.85, 1.15));
+      cells.push({ t, o, hp, max: hp, seen: 0 });
+    }
+    return cells;
+  },
+  cell(x, y) { return (x < 0 || y < 0 || x >= MINE_W || y > MINE_H) ? null : this.st().run.cells[y * MINE_W + x]; },
+  reveal() { const r = this.st().run, R = 1 + this.st().lamp; for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) { if (dx * dx + dy * dy > R * R + 1) continue; const c = this.cell(r.x + dx, r.y + dy); if (c) c.seen = 1; } },
+  begin() {
+    const m = this.st(); if (G.flags.inCombat) return false;
+    if (!m.run) { m.run = { cells: this.gen(), x: 4, y: 0, energy: this.maxEnergy(), swings: 0 }; this.reveal(); bump('mineRuns'); }
+    return true;
+  },
+  fresh() { const m = this.st(); if (!m.run || m.run.y !== 0) return false; m.run = null; this.begin(); Game.sync(); return true; },
+  hurt(frac) { const S = Stats.get(), d = Math.max(1, Math.min(G.p.hp - 1, Math.round(S.maxHp * frac))); G.p.hp -= d; bump('dmgTaken', d); return d; },
+  // Action sur une case adjacente : déplacement ou coup de pioche. Renvoie un message.
+  act(x, y) {
+    const m = this.st(), r = m.run; if (!r || G.flags.inCombat) return null;
+    const dx = Math.abs(x - r.x), dy = Math.abs(y - r.y); if (dx + dy !== 1) return 'Cible trop éloignée : choisissez une case voisine.';
+    const c = this.cell(x, y); if (!c) return null;
+    if (c.t === 'empty') { r.x = x; r.y = y; this.reveal(); if (y > (G.c.mineDepth || 0)) G.c.mineDepth = y; Game.sync(); return y === 0 ? 'Vous êtes à la surface.' : null; }
+    if (c.t === 'lava') return '🌋 De la lave ! Impossible de la creuser.';
+    const b = mineBand(y); if (b.tier > m.tier) return `Trop dur ! Il faut une pioche de rang ${b.tier} (la vôtre : ${m.tier}).`;
+    if (r.energy < 1) return 'Épuisé ! Remontez à la surface ou buvez une potion de mana.';
+    const S = Stats.get(); r.energy -= 1; r.swings++; bump('mineSwings');
+    let p = this.power() * rnd(.9, 1.1); const crit = chance(S.crit / 100); if (crit) p *= 2; c.hp -= p;
+    if (c.hp > 0) { Game.sync(); return crit ? '💥 Coup critique !' : null; }
+    // bloc détruit
+    c.hp = 0; const t = c.t, ore = c.o; c.t = 'empty'; c.o = null; bump('mined'); let msg = '';
+    const E = Stats.sum();
+    if (t === 'ore') { const n = rint(1, 2) + (chance(.1 + m.tier * .03) ? 1 : 0); msg = this.toBag(ore, n); }
+    else if (t === 'gold') { const g = Math.round(rint(8, 20) * (1 + y * .25) * (1 + (E.goldPct || 0))); m.bagGold += g; msg = `🪙 +${g} or (dans le sac)`; }
+    else if (t === 'chest') { const it = genItem({ ilvl: Math.round(G.p.lvl * .6 + y * 1.2) + 1, luck: (E.lootLuck || 0) + .08, minR: y > 20 ? 1 : 0 }); Inv.add(it, 'drop'); bump('chests'); bump('mineChests'); msg = `🎁 Coffre : ${it.name} (${RARITIES[it.r].n})`; }
+    else if (chance(.12)) msg = this.toBag(pick(b.ores)[0], 1);
+    if (b.tier >= 2 && chance(.02 * b.tier)) { const d = this.hurt(.08); r.energy = Math.max(0, r.energy - 3); msg += ` Éboulement ! −${d} PV, −3 énergie.`; bump('cavein'); }
+    for (const [ax, ay] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) { const a = this.cell(ax, ay); if (a && a.t === 'lava' && chance(.3)) { const d = this.hurt(.1); msg += ` 🌋 La lave déborde ! −${d} PV.`; bump('lavaHits'); break; } }
+    if (y >= 5 && chance(.02)) { U.returnTo = 'mine'; Game.sync(); const Z = ZONE('montagne'); Explore.fight([Enemies.make(pick(['harpie', 'golem_roc', 'salamandre']), clamp(G.p.lvl, Z.min, Z.max))], Z); return '⚠ Une créature surgit de la roche !'; }
+    r.x = r.x; this.reveal(); Game.sync(); return msg || null;
+  },
+  toBag(id, n) {
+    const m = this.st(), room = this.cap() - this.bagCount(); const k = Math.min(n, Math.max(0, room));
+    if (k <= 0) return '🎒 Sac plein ! Les minerais sont perdus.';
+    m.bag[id] = (m.bag[id] || 0) + k; return `${MATS[id][1]} +${k} ${MATS[id][0]}`;
+  },
+  // Remontée à la surface : le sac est converti en matériaux et en or
+  surface() {
+    const m = this.st(), r = m.run; if (!r || r.y !== 0) return null;
+    const lines = []; for (const k in m.bag) { Mats.add(k, m.bag[k]); lines.push(`${MATS[k][1]} ${m.bag[k]} ${MATS[k][0]}`); }
+    if (m.bagGold) { Player.gold(m.bagGold); lines.push(`🪙 ${fmt(m.bagGold)} or`); }
+    m.bag = {}; m.bagGold = 0; r.energy = this.maxEnergy(); Player.heal(Stats.get().maxHp * .2); bump('mineDeliveries'); Game.sync(); return lines;
+  },
+  // Corde d'évacuation : retour immédiat, mais 30 % du sac est perdu
+  evacuate() {
+    const m = this.st(), r = m.run; if (!r || G.flags.inCombat) return false;
+    for (const k in m.bag) m.bag[k] = Math.floor(m.bag[k] * .7); m.bagGold = Math.floor(m.bagGold * .7);
+    r.x = 4; r.y = 0; this.reveal(); bump('evacuations'); Game.sync(); return true;
+  },
+  drinkEnergy() { const r = this.st().run; if (!r || (G.cons.potion_mp || 0) < 1) return false; G.cons.potion_mp--; r.energy = Math.min(this.maxEnergy(), r.energy + Math.round(this.maxEnergy() * .5)); Game.sync(); return true; },
+  pickCost() { const t = this.st().tier; return { gold: 150 * t * t, mats: Object.assign({ ore: 8 * t }, t >= 2 ? { crystal: t - 1 } : {}, t >= 3 ? { ember: t - 2 } : {}, t >= 5 ? { star: t - 4 } : {}) }; },
+  lampCost() { const l = this.st().lamp; return { gold: 100 * l * l, mats: { crystal: l * 2 } }; },
+  upgrade(kind) {
+    const m = this.st(); if (G.flags.inCombat) return false;
+    if (kind === 'pick' && m.tier >= 6) return false; if (kind === 'lamp' && m.lamp >= 4) return false;
+    const c = kind === 'pick' ? this.pickCost() : this.lampCost();
+    if (G.p.gold < c.gold || !Mats.has(c.mats)) return false;
+    G.p.gold -= c.gold; Mats.take(c.mats); bump('goldSpent', c.gold); if (kind === 'pick') m.tier++; else m.lamp++;
+    bump('mineUpgrades'); if (m.run) this.reveal(); Game.sync(); return true;
+  }
+};
+
+/* ----- Interface du minage ----- */
+UI.mine = function () {
+  if (!Mine.begin()) return; U.returnTo = null; UI.show('mine'); UI.renderMine();
+};
+UI.renderMine = function (msg) {
+  if (U.screen !== 'mine') return;
+  const m = Mine.st(), r = m.run; if (!r) { UI.show('game'); return; }
+  const b = mineBand(r.y), S = Stats.get(), rows = [];
+  const y0 = Math.max(0, r.y - 4), y1 = Math.min(MINE_H, y0 + 11);
+  for (let y = y0; y <= y1; y++) {
+    const cells = [];
+    for (let x = 0; x < MINE_W; x++) {
+      const c = Mine.cell(x, y), me = r.x === x && r.y === y, adj = Math.abs(x - r.x) + Math.abs(y - r.y) === 1;
+      let ic = '', cls = 'mc';
+      if (me) { ic = '⛏️'; cls += ' me'; }
+      else if (!c.seen) { cls += ' fog'; }
+      else if (c.t === 'empty') { cls += ' open'; }
+      else if (c.t === 'ore') { ic = MATS[c.o][1]; cls += ' ore'; }
+      else { ic = MINE_ICON[c.t]; cls += ' ' + c.t; }
+      const dmg = c.max && c.t !== 'lava' && c.t !== 'empty' && c.seen ? c.hp / c.max : 1;
+      cells.push(`<button class="${cls} ${adj ? 'adj' : ''}" data-act="mineCell" data-x="${x}" data-y="${y}" style="--d:${(dmg * 100).toFixed(0)}%" aria-label="case ${x},${y}">${ic}</button>`);
+    }
+    rows.push(`<div class="mrow"><span class="mdepth">${y === 0 ? '☀️' : y}</span>${cells.join('')}</div>`);
+  }
+  $id('screen-mine').innerHTML = `<div class="minewrap">
+    <div class="c-top"><b>⛏️ La Mine — profondeur ${r.y} · ${b.name}</b><button class="btn sm" data-act="mineExit">Quitter la mine</button></div>
+    <div class="mbars">${bar(r.energy, Mine.maxEnergy(), 'xp', `⚡ Énergie ${Math.round(r.energy)} / ${Mine.maxEnergy()}`)}${bar(G.p.hp, S.maxHp, 'hp', `❤ ${fmt(G.p.hp)} / ${fmt(S.maxHp)}`)}${bar(Mine.bagCount(), Mine.cap(), 'mp', `🎒 Sac ${Mine.bagCount()} / ${Mine.cap()}`)}</div>
+    <div class="mflex"><div class="mgrid" id="mgrid">${rows.join('')}</div>
+    <div class="mside"><div class="panel"><h3>Sac</h3>${Object.keys(m.bag).map(k => `<div>${MATS[k][1]} ${MATS[k][0]} × <b>${m.bag[k]}</b></div>`).join('') || '<em>Vide</em>'}${m.bagGold ? `<div>🪙 ${fmt(m.bagGold)} or</div>` : ''}
+      <div class="row wrap"><button class="btn sm primary" data-act="mineSurface" ${r.y === 0 ? '' : 'disabled'}>Déposer à la surface</button><button class="btn sm danger" data-act="mineEvac" ${r.y > 0 ? '' : 'disabled'} data-tip="Retour immédiat, mais 30 % du sac est perdu.">Corde d’évacuation</button></div>
+      <div class="row wrap"><button class="btn sm" data-act="mineDrink" ${(G.cons.potion_mp || 0) > 0 && r.energy < Mine.maxEnergy() ? '' : 'disabled'}>💧 Potion (+50 % énergie) ×${G.cons.potion_mp || 0}</button><button class="btn sm" data-act="mineFresh" ${r.y === 0 ? '' : 'disabled'} data-tip="Génère une nouvelle mine (à la surface uniquement).">Nouvelle mine</button></div></div>
+      <div class="panel"><h3>Atelier</h3><div>Pioche rang <b>${m.tier}</b>/6 — puissance ${Mine.power()}</div>${m.tier < 6 ? `<div class="row wrap"><small>${fmt(Mine.pickCost().gold)} 🪙 ${Object.keys(Mine.pickCost().mats).map(k => `${MATS[k][1]}${Mine.pickCost().mats[k]}`).join(' ')}</small><button class="btn sm" data-act="mineUp" data-k="pick" ${G.p.gold >= Mine.pickCost().gold && Mats.has(Mine.pickCost().mats) ? '' : 'disabled'}>Améliorer</button></div>` : ''}
+        <div>Lanterne rang <b>${m.lamp}</b>/4</div>${m.lamp < 4 ? `<div class="row wrap"><small>${fmt(Mine.lampCost().gold)} 🪙 ${Object.keys(Mine.lampCost().mats).map(k => `${MATS[k][1]}${Mine.lampCost().mats[k]}`).join(' ')}</small><button class="btn sm" data-act="mineUp" data-k="lamp" ${G.p.gold >= Mine.lampCost().gold && Mats.has(Mine.lampCost().mats) ? '' : 'disabled'}>Améliorer</button></div>` : ''}</div></div></div>
+    <div class="exlog" id="mmsg">${msg ? esc(msg) : '<em>Cliquez une case voisine (ou utilisez les flèches / ZQSD) pour vous déplacer ou piocher. Les cases rouges sont de la lave.</em>'}</div></div>`;
+};
+Object.assign(Act, {
+  mineCell(d) { const r = Mine.act(+d.x, +d.y); if (U.screen === 'mine') UI.renderMine(r); },
+  mineSurface() { const l = Mine.surface(); UI.renderMine(l ? (l.length ? 'Déposé : ' + l.join(', ') : 'Sac vide. Énergie restaurée.') : null); },
+  mineEvac() { if (confirm('Utiliser la corde d’évacuation ? 30 % du sac sera perdu.') && Mine.evacuate()) UI.renderMine('Vous remontez en hâte.'); },
+  mineDrink() { Mine.drinkEnergy(); UI.renderMine('Énergie restaurée.'); },
+  mineFresh() { if (confirm('Générer une nouvelle mine ? Vos blocs déjà minés seront remis en place.')) { Mine.fresh(); UI.renderMine('Une nouvelle mine vous attend.'); } },
+  mineUp(d) { if (Mine.upgrade(d.k)) UI.renderMine('Amélioration réussie !'); },
+  mineExit() { Game.sync(); UI.show('game'); UI.renderGame(); },
+  launchMine() { UI.mine(); }
+});
+document.addEventListener('keydown', e => {
+  if (U.screen !== 'mine' || !G || !G.mine || !G.mine.run) return;
+  const r = G.mine.run, k = e.key.toLowerCase(), dir = { arrowup: [0, -1], z: [0, -1], w: [0, -1], arrowdown: [0, 1], s: [0, 1], arrowleft: [-1, 0], q: [-1, 0], a: [-1, 0], arrowright: [1, 0], d: [1, 0] }[k];
+  if (!dir) return; e.preventDefault(); UI.renderMine(Mine.act(r.x + dir[0], r.y + dir[1]));
+});
+
+/* ---------- MODE 3 : AVENTURE EN TEMPS RÉEL (inspirée des RPG d'action « à la Cat Quest ») ----------
+   Vue de dessus sur canvas. Déplacement libre, attaque, roulade d'esquive, sorts (vos compétences actives),
+   ennemis qui télégraphient leurs attaques par une zone rouge. Même personnage, mêmes formules de dégâts,
+   mêmes butins, mêmes compteurs de traits que le mode tour par tour. */
+const AR_RANGED = ['bow', 'crossbow', 'gun', 'staff', 'wand', 'tome'];
+const Arcade = {
+  A: null, on: false, raf: 0, cv: null, ctx: null, last: 0, W: 2400, H: 1800,
+  init(zid) {
+    const Z = ZONE(zid), A = this.A = {
+      Z, lvl: clamp(G.p.lvl, Z.min, Z.max), night: !!Z.night, time: 0, kills: 0, corpses: 0, statT: 0, tick: 0, spawnT: 2, bossOn: false, bossDead: false, msg: '', msgT: 0,
+      P: { x: this.W / 2, y: this.H / 2, r: 14, face: 0, atkCd: 0, rollCd: 0, roll: 0, rdx: 0, rdy: 0, inv: 0, st: {}, buffs: [], spCd: [0, 0, 0], potCd: 0, focus: false, counter: null, shield: 0, dotT: 1, hurtT: 0 },
+      enemies: [], shots: [], eshots: [], teles: [], allies: [], loot: [], chests: [], obst: [], fx: [], keys: {}, btn: {}, joy: { x: 0, y: 0 }, aim: null,
+      comp: G.active && G.comp[G.active] ? { x: this.W / 2 - 30, y: this.H / 2, cd: 1 } : null
+    };
+    for (let i = 0; i < 70; i++) { const x = rnd(60, this.W - 60), y = rnd(60, this.H - 60); if (Math.hypot(x - A.P.x, y - A.P.y) > 160) A.obst.push({ x, y, r: rnd(18, 34), k: Z.id }); }
+    for (let i = 0; i < 6; i++) A.chests.push({ x: rnd(120, this.W - 120), y: rnd(120, this.H - 120), open: false });
+    A.S = Stats.get(); A.E = Stats.sum(); A.spells = Skills.actives().slice(0, 3);
+    for (let i = 0; i < 12; i++) this.spawn(true);
+    return A;
+  },
+  start(zid) {
+    const Z = ZONE(zid); if (!Z || G.flags.inCombat || G.p.lvl < Z.min - 1) { UI.toast('Zone inaccessible pour le moment.', 'bad'); return; }
+    this.init(zid); this.on = true; U.returnTo = null; UI.show('arcade'); this.bind(); this.resize(); this.last = performance.now();
+    bump('arcadeRuns'); this.raf = requestAnimationFrame(t => this.frame(t));
+  },
+  stop() {
+    this.on = false; cancelAnimationFrame(this.raf); this.unbind(); Game.sync(); UI.show('game'); UI.renderGame();
+  },
+  /* --- apparition --- */
+  spawn(far) {
+    const A = this.A, Z = A.Z; let x, y, g = 0;
+    do { x = rnd(80, this.W - 80); y = rnd(80, this.H - 80); } while (Math.hypot(x - A.P.x, y - A.P.y) < (far ? 380 : 520) && g++ < 20);
+    const tpl = pick(Z.enemies), elite = chance(.1) && A.lvl >= Z.min;
+    const e = Enemies.make(tpl, elite ? A.lvl + 1 : clamp(A.lvl + rint(-1, 0), 1, 999), elite ? 'elite' : undefined);
+    this.rt(e, x, y); A.enemies.push(e); return e;
+  },
+  rt(e, x, y) { Object.assign(e, { x, y, r: e.boss ? 34 : e.tier === 'elite' ? 20 : 14, sp: clamp(48 + e.spd * 2.2, 48, 150), cd: rnd(.6, 1.6), flash: 0, tickT: 1, aggro: false, wob: rnd(0, 6) }); },
+  txt(x, y, t, col = '#fff') { this.A.fx.push({ x, y, t, col, life: .9 }); },
+  say(m) { this.A.msg = m; this.A.msgT = 3.5; },
+  buffV(k) { return this.A.P.buffs.filter(b => b.k === k && b.t > 0).reduce((s, b) => s + b.v, 0); },
+  nearest(x, y, maxD = 1e9) { let b = null, bd = maxD; for (const e of this.A.enemies) { if (e.dead) continue; const d = Math.hypot(e.x - x, e.y - y); if (d < bd) { bd = d; b = e; } } return b; },
+
+  /* --- dégâts infligés aux ennemis (mêmes formules que le combat) --- */
+  hitEnemy(e, m, o = {}) {
+    const A = this.A, S = A.S, E = A.E; if (e.dead) return 0;
+    if (e.dodge && !o.sure && chance(Math.max(0, e.dodge - S.prec) / 100)) { this.txt(e.x, e.y - 24, 'Raté', '#aaa'); return 0; }
+    const type = o.t || Combat.wtype(); let raw = (type === 'mag' ? S.mag : S.atk) * m * rnd(.9, 1.1);
+    const bonus = this.buffV('atk') + (o.skill ? (E.skillPct || 0) : 0) + (e.boss ? (E.dmgBossPct || 0) : 0) + (e.mark ? e.mark.v : 0) + (A.night ? (E.nightAtk || 0) : 0);
+    raw *= (1 + bonus) * mitig(e.def * (1 - S.pen / 100), e.lvl) * (1 - clamp(e.res[o.el || 'phys'] || 0, -1, .9));
+    const crit = o.crit || (!o.skill && A.P.focus) || chance((S.crit + (o.cb || 0) + this.buffV('crit')) / 100);
+    if (crit) { raw *= 1.6 + (E.critDmg || 0); bump('crits'); if (!o.skill) A.P.focus = false; }
+    const dmg = Math.max(1, Math.round(raw)); e.hp -= dmg; e.flash = .12; bump('dmgDealt', dmg);
+    this.txt(e.x + rnd(-8, 8), e.y - 26, (crit ? '✦' : '') + dmg, crit ? '#f1d58a' : '#fff');
+    if (E.lifesteal) { const h = Player.heal(dmg * E.lifesteal * (1 + (E.healPct || 0))); if (h) this.txt(A.P.x, A.P.y - 30, '+' + h, '#6cc07a'); }
+    if (!o.noHit && o.by !== 'ally') for (const [id, key, t] of [['bleed', 'hitBleed', 3], ['burn', 'hitBurn', 3], ['freeze', 'hitFreeze', 1], ['poison', 'hitPoison', 4]]) if (E[key]) this.applyE(e, id, t, E[key]);
+    if (o.st) this.applyE(e, o.st[0], o.st[2], o.st[1]); if (o.st2) this.applyE(e, o.st2[0], o.st2[2], o.st2[1]);
+    if (e.hp <= 0) this.kill(e, { by: o.by || 'player', el: o.el || 'phys', skill: !!o.skill, crit }); else this.phase(e);
+    return dmg;
+  },
+  applyE(e, id, t, ch = 1) {
+    const A = this.A, S = A.S, E = A.E, sd = STATUS[id], res = e.res[sd.res] || 0;
+    if (e.dead || res >= .9) return false; if (e.boss && sd.skip && (e.cdStun > 0 || e.st[id])) return false;
+    if (!chance(ch * (1 + (E.statusChance || 0)) * (1 - Math.max(0, res)))) return false;
+    e.st[id] = { t: t * (sd.skip ? 1 : 1.2), pow: Math.max(1, (S.atk + S.mag) / 2 * .3 * (1 + (E.dotPct || 0))) };
+    if (e.boss && sd.skip) e.cdStun = 5; bump('statusApplied'); this.txt(e.x, e.y - 40, sd.i, '#c79ae8'); return true;
+  },
+  phase(e) {
+    while (e.boss && e.phases[e.phase] && e.hp <= e.maxHp * e.phases[e.phase].at && !e.dead) {
+      const p = e.phases[e.phase++]; this.say(p.msg); if (p.enrage) e.atk *= 1 + p.enrage; if (p.heal) e.hp = Math.min(e.maxHp, e.hp + Math.round(e.maxHp * p.heal)); if (p.add) e.cycle.push(...p.add);
+      if (p.summon) for (let i = 0; i < (p.n || 1); i++) { const m = Enemies.make(p.summon, Math.max(1, e.lvl - 3), 'minion'); this.rt(m, e.x + rnd(-80, 80), e.y + rnd(-80, 80)); m.aggro = true; this.A.enemies.push(m); }
+    }
+  },
+  kill(e, o = {}) {
+    const A = this.A, E = A.E; if (e.dead) return;
+    if (e.boss && e.resurrect && !e.resUsed) { e.resUsed = true; e.hp = Math.round(e.maxHp * .4); e.st = {}; this.say(`${e.n} se relève !`); return; }
+    e.dead = true; A.kills++; A.corpses++;
+    bump('kills'); bump('arcadeKills'); bump('k_' + e.tpl); bump('kz_' + A.Z.id); bump(A.Z.night ? 'nightKills' : 'dayKills');
+    if (e.tier === 'elite') bump('killsElite'); if (e.boss) { bump('killsBoss'); bump('bk_' + e.tpl); if (e.lvl >= G.p.lvl + 4) bump('giantKills'); }
+    if (o.dot) bump('dotKills'); if (o.by === 'summon') bump('summonKills'); if (o.by === 'ally') bump('compKills');
+    if (o.by === 'player') { if (o.el) bump('ek_' + o.el); if (o.skill) bump('killsSkill'); else bump('killsBasic'); if (o.crit) bump('killsCrit'); if (G.eq.weapon && G.eq.weapon.cat) { G.c.wcats = G.c.wcats || {}; G.c.wcats[G.eq.weapon.cat] = 1; } }
+    if (E.onKillMp) Player.restoreMp(E.onKillMp);
+    if (e.minion) return;
+    const rm = .85 * (DIFFICULTY[G.p.diff || 'normal'] || DIFFICULTY.normal).rew, tm = e.tier === 'boss' ? 6 : e.tier === 'elite' ? 2.5 : 1;
+    let x = 12 * Math.pow(e.lvl, 1.3) * tm; if (G.p.lvl > e.lvl + 9) x *= .25; else if (G.p.lvl > e.lvl + 4) x *= .5;
+    x = Math.round(x * rm * (1 + (E.xpPct || 0))); const g = Math.round((6 + e.lvl * 3) * rnd(.7, 1.3) * (e.tier === 'boss' ? 8 : e.tier === 'elite' ? 2.5 : 1) * rm * (1 + (E.goldPct || 0)));
+    Player.addXp(x); Player.gold(g); this.txt(e.x, e.y - 50, `+${x} XP`, '#d9b862');
+    if (chance(e.tier === 'boss' ? 1 : e.tier === 'elite' ? .75 : .15)) A.loot.push({ x: e.x, y: e.y, k: 'item', it: genItem({ ilvl: e.lvl + (e.boss ? 2 : 0), luck: E.lootLuck || 0, minR: e.boss ? 2 : e.tier === 'elite' ? 1 : 0, boss: e.boss }) });
+    if (e.boss && G.bosses[e.tpl] !== true) { G.bosses[e.tpl] = true; A.loot.push({ x: e.x, y: e.y, k: 'item', it: bossUnique(e.tpl, e.lvl) }); }
+    const pool = A.Z.mats; if (pool.length && chance(e.tier === 'normal' ? .5 : 1)) A.loot.push({ x: e.x + rnd(-20, 20), y: e.y + rnd(-20, 20), k: 'mat', id: pick(pool), n: e.tier === 'boss' ? rint(3, 5) : e.tier === 'elite' ? rint(2, 3) : rint(1, 2) });
+    if (chance(.1)) A.loot.push({ x: e.x, y: e.y, k: 'cons', id: pick(['potion_hp', 'potion_mp', 'antidote']) });
+    if (e.boss) { A.bossDead = true; this.say(`${e.n} est vaincu !`); }
+    if (A.kills % 5 === 0) Game.sync();
+  },
+
+  /* --- dégâts subis par le joueur --- */
+  hurtP(e, sk) {
+    const A = this.A, P = A.P, S = A.S, E = A.E;
+    if (chance(S.dodge / 100)) { bump('dodges'); this.txt(P.x, P.y - 30, 'Esquive', '#9ad'); return; }
+    const magic = !!(sk.el && sk.el !== 'phys'), defV = (magic ? S.mres : S.def) * (1 + this.buffV('def'));
+    let raw = e.atk * (1 + e.buffAtk) * sk.m * rnd(.9, 1.1) * mitig(defV, S.lvl);
+    if (magic) raw *= 1 - clamp(E['res' + sk.el.charAt(0).toUpperCase() + sk.el.slice(1)] || 0, -.5, .75);
+    raw *= clamp(1 + (E.dmgTakenPct || 0), .25, 1.5); let d = Math.max(1, Math.round(raw));
+    if (P.shield > 0) { const a = Math.min(P.shield, d); P.shield -= a; d -= a; bump('shieldAbs', a); }
+    if (d > 0) {
+      G.p.hp -= d; bump('dmgTaken', d); P.hurtT = .25; this.txt(P.x, P.y - 30, '-' + d, '#ff8a8a'); if (d >= S.maxHp * .5) bump('bigHits');
+      if (sk.drain) e.hp = Math.min(e.maxHp, e.hp + Math.round(d * sk.drain));
+      for (const s of [sk.st, sk.st2]) if (s && chance(s[1] * (1 - S.sres / 100))) { const sd = STATUS[s[0]]; P.st[s[0]] = { t: s[2] * (sd.skip ? 1 : 1.2), pow: Math.max(1, e.atk * .22) }; bump('statusTaken'); this.txt(P.x, P.y - 44, sd.i, '#c79ae8'); }
+    }
+    if (P.counter && !e.dead) { bump('counters'); this.hitEnemy(e, P.counter.m, { by: 'player' }); }
+    if (E.thorns && d > 0 && !e.dead) { const t = Math.max(1, Math.round(d * E.thorns)); bump('thornsDmg', t); e.hp -= t; if (e.hp <= 0) this.kill(e, { by: 'player' }); }
+    if (G.p.hp <= 0) { if (E.revive && !P.revived) { P.revived = true; G.p.hp = 1; bump('lastStands'); this.say('Une force ancienne vous retient !'); } else this.die(); }
+  },
+  die() {
+    const A = this.A, P = A.P, S = A.S; bump('deaths'); const loss = Math.floor(G.p.gold * (DIFFICULTY[G.p.diff || 'normal'] || DIFFICULTY.normal).loss * (1 - clamp(A.E.deathMit || 0, 0, 1)) * .6);
+    G.p.gold -= loss; G.p.hp = Math.round(S.maxHp * .5); P.x = this.W / 2; P.y = this.H / 2; P.st = {}; P.buffs = []; P.shield = 0; P.revived = false;
+    for (const e of A.enemies) { e.aggro = false; if (Math.hypot(e.x - P.x, e.y - P.y) < 350) { e.x += 500; } } A.teles = []; A.eshots = [];
+    this.say(`Vous êtes vaincu… (−${loss} or). Vous reprenez connaissance au point de départ.`); Game.sync();
+  },
+
+  /* --- actions du joueur --- */
+  attack() {
+    const A = this.A, P = A.P, S = A.S; if (P.atkCd > 0 || P.roll > 0 || P.st.stun || P.st.freeze) return;
+    const t = this.nearest(P.x, P.y, 420); if (A.aim) P.face = A.aim; else if (t) P.face = Math.atan2(t.y - P.y, t.x - P.x);
+    P.atkCd = clamp(.85 - S.spd * .012, .32, .85); P.swing = .18; const w = G.eq.weapon, ranged = w && AR_RANGED.includes(w.cat) || (!w && false);
+    if (ranged) A.shots.push({ x: P.x, y: P.y, vx: Math.cos(P.face) * 560, vy: Math.sin(P.face) * 560, r: 7, life: .7, m: 1, el: 'phys', basic: true });
+    else for (const e of A.enemies) { if (e.dead) continue; const dx = e.x - P.x, dy = e.y - P.y, d = Math.hypot(dx, dy); if (d > 86 + e.r) continue; let da = Math.abs(Math.atan2(dy, dx) - P.face); da = Math.min(da, Math.PI * 2 - da); if (da < 1.15 || d < e.r + 22) this.hitEnemy(e, 1, {}); }
+  },
+  roll() {
+    const A = this.A, P = A.P; if (P.rollCd > 0 || P.st.stun || P.st.freeze) return;
+    let dx = (A.keys.d || A.keys.arrowright ? 1 : 0) - (A.keys.q || A.keys.a || A.keys.arrowleft ? 1 : 0) + A.joy.x, dy = (A.keys.s || A.keys.arrowdown ? 1 : 0) - (A.keys.z || A.keys.w || A.keys.arrowup ? 1 : 0) + A.joy.y;
+    if (!dx && !dy) { dx = Math.cos(P.face); dy = Math.sin(P.face); } const l = Math.hypot(dx, dy) || 1; P.rdx = dx / l; P.rdy = dy / l; P.roll = .22; P.inv = .32; P.rollCd = 1.0; bump('rolls');
+  },
+  cast(i) {
+    const A = this.A, P = A.P, S = A.S, E = A.E, id = A.spells[i]; if (!id || P.spCd[i] > 0 || P.st.stun || P.st.freeze) return;
+    const d = SK[id], f = d.fx, cost = Skills.cost(id); if (G.p.mp < cost) { this.say('Mana insuffisant.'); return; }
+    const rank = G.sk[id], aug = G.aug[id], pm = (1 + .2 * (rank - 1)) * (aug === 'power' ? 1.25 : 1);
+    G.p.mp -= cost; bump('manaSpent', cost); bump('skillsUsed'); if (f.aoe) bump('aoeUses'); P.spCd[i] = Math.max(.8, Skills.cdOf(id) * 2.2 + 1.2);
+    const tgt = this.nearest(P.x, P.y, 600); if (tgt) P.face = Math.atan2(tgt.y - P.y, tgt.x - P.x);
+    switch (f.k) {
+      case 'dmg': {
+        if (f.selfDmg) { G.p.hp = Math.max(1, G.p.hp - Math.round(S.maxHp * f.selfDmg)); bump('selfHarm'); }
+        let m = f.m; if (f.corpse) m = f.m + f.per * Math.min(A.corpses, 8); A.corpses = 0;
+        const base = { t: f.t, el: f.el, skill: true, cb: f.cb, st: f.st, st2: f.st2, m: m * pm, hits: f.hits || 1, exec: f.exec, hd: f.hd, hs: f.hs, steal: f.steal };
+        if (f.aoe) { let dealt = 0; for (const e of [...A.enemies]) if (!e.dead && Math.hypot(e.x - P.x, e.y - P.y) < 210 + e.r) dealt += this.spellHit(e, base); A.fx.push({ x: P.x, y: P.y, ring: 210, life: .35, col: '#4fb3a5' }); this.spellExtra(base, dealt); }
+        else A.shots.push(Object.assign({ x: P.x, y: P.y, vx: Math.cos(P.face) * 520, vy: Math.sin(P.face) * 520, r: 10, life: 1, spell: base, el: f.el || 'phys' }, {}));
+        break;
+      }
+      case 'heal': { const h = Player.heal(S.maxHp * f.f * pm * (1 + (E.healPct || 0))); this.txt(P.x, P.y - 30, '+' + h, '#6cc07a'); if (f.cleanse) P.st = {}; break; }
+      case 'buff': { for (const k in f.b) P.buffs.push({ k, v: f.b[k] * pm, t: f.t * 2.5 }); if (f.hs) { const h = Player.heal(S.maxHp * f.hs * (1 + (E.healPct || 0))); if (h) this.txt(P.x, P.y - 30, '+' + h, '#6cc07a'); } this.txt(P.x, P.y - 44, '⬆', '#f1d58a'); break; }
+      case 'summon': { for (let k = 0; k < f.cnt; k++) A.allies.push({ x: P.x + rnd(-30, 30), y: P.y + rnd(-30, 30), pow: f.pow * pm, life: f.t * 2.5, cd: .5, n: f.n }); bump('summonsUsed'); if (A.allies.length >= 3) bump('tripleSummon'); break; }
+      case 'counter': P.counter = { m: f.m * pm, t: f.t * 2.5 }; break;
+      case 'extra': Player.restoreMp(S.maxMp * (f.mpf || 0)); P.spCd = [0, 0, 0]; P.atkCd = 0; this.txt(P.x, P.y - 40, '⏱', '#f1d58a'); break;
+      case 'focus': Player.restoreMp(S.maxMp * f.mpf * pm); P.focus = true; this.txt(P.x, P.y - 40, '🎯', '#f1d58a'); break;
+      case 'mark': if (tgt) tgt.mark = { v: f.v * pm, t: f.t * 2.5 }; break;
+    }
+  },
+  spellHit(e, b) { let dealt = 0; for (let h = 0; h < b.hits; h++) { if (e.dead) break; let mm = b.m; if (b.exec && e.hp / e.maxHp < .4) mm *= 1 + b.exec; dealt += this.hitEnemy(e, mm, b); } return dealt; },
+  spellExtra(b, dealt) {
+    const A = this.A, S = A.S, E = A.E;
+    if (b.hd && dealt > 0) Player.heal(dealt * b.hd * (1 + (E.healPct || 0))); if (b.hs) Player.heal(S.maxHp * b.hs * (1 + (E.healPct || 0)));
+    if (b.steal && dealt > 0) { const g = Math.round(S.lvl * rint(3, 8) * (1 + (E.goldPct || 0))); Player.gold(g); this.txt(A.P.x, A.P.y - 44, '+' + g + '🪙', '#f1d58a'); }
+  },
+  potion() { const A = this.A, P = A.P; if (P.potCd > 0 || (G.cons.potion_hp || 0) < 1) return; G.cons.potion_hp--; P.potCd = 1.2; const h = Player.heal(A.S.maxHp * CONS.potion_hp.f * (1 + (A.E.potionPct || 0) + (A.E.healPct || 0))); bump('potions'); this.txt(P.x, P.y - 30, '+' + h, '#6cc07a'); },
+
+  /* --- mise à jour --- */
+  collide(o, r, list) { for (const ob of list) { const dx = o.x - ob.x, dy = o.y - ob.y, d = Math.hypot(dx, dy), m = ob.r + r; if (d < m && d > 0) { o.x = ob.x + dx / d * m; o.y = ob.y + dy / d * m; } } },
+  update(dt) {
+    const A = this.A, P = A.P; A.time += dt; A.tick += dt; A.statT -= dt;
+    if (A.statT <= 0) { A.S = Stats.get(); A.E = Stats.sum(); A.statT = .3; A.spells = Skills.actives().slice(0, 3); }
+    const S = A.S, E = A.E; if (A.msgT > 0) A.msgT -= dt;
+    if (A.tick >= 1) { A.tick -= 1; bump('arcadeSeconds'); }
+    // entrées
+    let mx = (A.keys.d || A.keys.arrowright ? 1 : 0) - (A.keys.q || A.keys.a || A.keys.arrowleft ? 1 : 0) + A.joy.x, my = (A.keys.s || A.keys.arrowdown ? 1 : 0) - (A.keys.z || A.keys.w || A.keys.arrowup ? 1 : 0) + A.joy.y;
+    const ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; }
+    const stun = P.st.stun || P.st.freeze;
+    if (P.roll > 0) { P.roll -= dt; P.x += P.rdx * 520 * dt; P.y += P.rdy * 520 * dt; }
+    else if (!stun && ml > .05) { const sp = clamp(140 + S.spd * 3.2, 140, 300); P.x += mx * sp * dt; P.y += my * sp * dt; P.face = Math.atan2(my, mx); }
+    this.collide(P, P.r, A.obst); P.x = clamp(P.x, 20, this.W - 20); P.y = clamp(P.y, 20, this.H - 20);
+    for (const k of ['atkCd', 'rollCd', 'inv', 'potCd', 'hurtT', 'swing']) if (P[k] > 0) P[k] -= dt; for (let i = 0; i < 3; i++) if (P.spCd[i] > 0) P.spCd[i] -= dt;
+    P.buffs = P.buffs.filter(b => (b.t -= dt) > 0); if (P.counter && (P.counter.t -= dt) <= 0) P.counter = null;
+    if (A.btn.attack || A.keys.j || A.keys.k) this.attack();
+    // régénération & statuts
+    const calm = !this.nearest(P.x, P.y, 320);
+    Player.restoreMp((S.maxMp * .012 + (E.mpRegen || 0) * .4) * dt); const rg = this.buffV('regen') + (E.regenTurn || 0) * .5 + (calm ? .004 : 0);
+    if (rg) { A._rg = (A._rg || 0) + S.maxHp * rg * dt; if (A._rg >= 1) { Player.heal(Math.floor(A._rg)); A._rg -= Math.floor(A._rg); } }
+    P.dotT -= dt;
+    for (const id of Object.keys(P.st)) { const s = P.st[id]; s.t -= dt; if (s.t <= 0) { delete P.st[id]; continue; } if (!STATUS[id].skip && P.dotT <= 0) { const dd = Math.max(1, Math.round(s.pow * STATUS[id].k)); G.p.hp -= dd; bump('dmgTaken', dd); this.txt(P.x, P.y - 30, '-' + dd, '#c79ae8'); if (G.p.hp <= 0) this.die(); } }
+    if (P.dotT <= 0) P.dotT = 1;
+    // coffres
+    for (const c of A.chests) if (!c.open && Math.hypot(c.x - P.x, c.y - P.y) < 34) { c.open = true; const lines = Explore.chest(A.Z); this.say('🎁 Coffre : ' + lines.join(', ')); Game.sync(); }
+    // ennemis
+    for (const e of A.enemies) { if (!e.dead) this.updEnemy(e, dt); }
+    A.enemies = A.enemies.filter(e => !e.dead);
+    A.spawnT -= dt; const cap = 12 + Math.min(8, Math.floor(G.p.lvl / 10)); if (A.spawnT <= 0 && A.enemies.filter(e => !e.minion).length < cap) { this.spawn(false); A.spawnT = 3.5; }
+    if (!A.bossOn && A.kills >= 25 && !A.bossDead) { const bid = DUNGEON(A.Z.dungeons[0]).boss, b = Enemies.make(bid, clamp(A.lvl + 2, 1, 999)); let bx = P.x < this.W / 2 ? this.W - 200 : 200, by = P.y < this.H / 2 ? this.H - 200 : 200; this.rt(b, bx, by); b.aggro = false; A.enemies.push(b); A.bossOn = true; this.say(`⚠ ${b.n} est apparu aux confins de la zone !`); }
+    // télégraphes
+    for (const t of A.teles) {
+      t.t += dt; if (t.t < t.dur) continue; t.done = true; const e = t.e; if (e.dead) continue;
+      if (t.kind === 'melee') { if (Math.hypot(P.x - t.x, P.y - t.y) < t.r + P.r) { if (P.inv > 0) { bump('dodges'); bump('rollDodges'); this.txt(P.x, P.y - 30, 'Roulade !', '#9ad'); } else this.hurtP(e, t.sk); } }
+      else A.eshots.push({ x: e.x, y: e.y, vx: Math.cos(t.a) * 290, vy: Math.sin(t.a) * 290, r: 10, life: 2.2, e, sk: t.sk, el: t.sk.el });
+    }
+    A.teles = A.teles.filter(t => !t.done);
+    for (const s of A.eshots) { s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt; if (!s.dead && Math.hypot(P.x - s.x, P.y - s.y) < s.r + P.r) { s.dead = true; if (P.inv > 0) { bump('dodges'); bump('rollDodges'); this.txt(P.x, P.y - 30, 'Roulade !', '#9ad'); } else this.hurtP(s.e, s.sk); } }
+    A.eshots = A.eshots.filter(s => s.life > 0 && !s.dead);
+    // projectiles du joueur
+    for (const s of A.shots) {
+      s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt;
+      for (const e of A.enemies) { if (e.dead || s.dead) continue; if (Math.hypot(e.x - s.x, e.y - s.y) < e.r + s.r) { s.dead = true; if (s.spell) { const dealt = this.spellHit(e, s.spell); this.spellExtra(s.spell, dealt); } else this.hitEnemy(e, s.m, { el: s.el }); } }
+    }
+    A.shots = A.shots.filter(s => s.life > 0 && !s.dead);
+    // invocations et compagnon
+    for (const al of A.allies) {
+      al.life -= dt; al.cd -= dt; const t = this.nearest(al.x, al.y, 500);
+      if (t) { const d = Math.hypot(t.x - al.x, t.y - al.y); if (d > 36) { al.x += (t.x - al.x) / d * 150 * dt; al.y += (t.y - al.y) / d * 150 * dt; } else if (al.cd <= 0) { al.cd = .9; bump('summonDmg', 0); this.hitEnemy(t, al.pow * (1 + (E.summonPct || 0)), { by: 'summon', noHit: true, sure: true }); } }
+      else { const d = Math.hypot(P.x - al.x, P.y - al.y); if (d > 60) { al.x += (P.x - al.x) / d * 120 * dt; al.y += (P.y - al.y) / d * 120 * dt; } }
+    }
+    A.allies = A.allies.filter(a => a.life > 0);
+    if (A.comp) this.updComp(dt);
+    // butin au sol
+    for (const l of A.loot) {
+      const d = Math.hypot(P.x - l.x, P.y - l.y); if (d < 110) { l.x += (P.x - l.x) / d * 260 * dt; l.y += (P.y - l.y) / d * 260 * dt; }
+      if (d < 20) { l.got = true; if (l.k === 'item') { Inv.add(l.it, 'drop'); this.txt(P.x, P.y - 50, l.it.name, RARITIES[l.it.r].c); } else if (l.k === 'mat') { Mats.add(l.id, l.n); this.txt(P.x, P.y - 50, `${MATS[l.id][1]}+${l.n}`, '#fff'); } else { G.cons[l.id] = (G.cons[l.id] || 0) + 1; this.txt(P.x, P.y - 50, CONS[l.id].i, '#fff'); } }
+    }
+    A.loot = A.loot.filter(l => !l.got);
+    for (const f of A.fx) { f.life -= dt; if (f.t) f.y -= 28 * dt; } A.fx = A.fx.filter(f => f.life > 0);
+  },
+  updEnemy(e, dt) {
+    const A = this.A, P = A.P, S = A.S; e.flash = Math.max(0, e.flash - dt); e.cd -= dt; if (e.cdStun > 0) e.cdStun -= dt; if (e.mark && (e.mark.t -= dt) <= 0) delete e.mark;
+    if (e.buffT > 0 && (e.buffT -= dt) <= 0) e.buffAtk = 0;
+    e.tickT -= dt; const tick = e.tickT <= 0; if (tick) e.tickT = 1;
+    for (const id of Object.keys(e.st)) { const s = e.st[id]; s.t -= dt; if (s.t <= 0) { delete e.st[id]; continue; } if (tick && !STATUS[id].skip) { const dd = Math.max(1, Math.round(s.pow * STATUS[id].k)); e.hp -= dd; bump('dmgDealt', dd); this.txt(e.x, e.y - 24, '-' + dd, '#c79ae8'); if (e.hp <= 0) { this.kill(e, { dot: true }); return; } } }
+    if (e.st.stun || e.st.freeze) return;
+    const dx = P.x - e.x, dy = P.y - e.y, d = Math.hypot(dx, dy), reach = e.r + 46;
+    if (d < 380 || e.boss && d < 700) e.aggro = true; if (d > 900 && !e.boss) e.aggro = false;
+    if (!e.aggro) { e.wob += dt; e.x += Math.cos(e.wob) * 12 * dt; e.y += Math.sin(e.wob * 1.3) * 12 * dt; return; }
+    const busy = A.teles.some(t => t.e === e);
+    if (d > reach * .8 && !busy) { e.x += dx / d * e.sp * dt; e.y += dy / d * e.sp * dt; }
+    this.collide(e, e.r, A.obst);
+    if (d <= reach + 24 + (e.boss ? 40 : 0) && e.cd <= 0 && !busy && P.inv <= 0.01) {
+      const id = Enemies.intent(e), sk = ESK[id] || ESK.strike;
+      if (sk.buff) { e.buffAtk = sk.buff; e.buffT = 6; this.txt(e.x, e.y - 40, '📣', '#ffb347'); e.cd = 2; }
+      else if (sk.healSelf) { e.hp = Math.min(e.maxHp, e.hp + e.maxHp * sk.healSelf); this.txt(e.x, e.y - 40, '+', '#6cc07a'); e.cd = 2; }
+      else { const magic = sk.el && sk.el !== 'phys', a = Math.atan2(dy, dx); A.teles.push({ e, sk, kind: magic ? 'bolt' : 'melee', t: 0, dur: sk.warn ? 1.1 : .7, a, x: e.x + Math.cos(a) * (e.r + 24), y: e.y + Math.sin(a) * (e.r + 24), r: (sk.warn ? 70 : 52) + (e.boss ? 24 : 0) }); e.cd = (e.boss ? 1.5 : 2) + rnd(0, .8); }
+    }
+  },
+  updComp(dt) {
+    const A = this.A, P = A.P, S = A.S, E = A.E, c = A.comp, d = COMPS[G.active], cc = G.comp[G.active], sk = d.skill;
+    const dx = P.x - c.x, dy = P.y - c.y, dist = Math.hypot(dx, dy); if (dist > 70) { c.x += dx / dist * 170 * dt; c.y += dy / dist * 170 * dt; }
+    c.cd -= dt; if (c.cd > 0) return; const atk = (d.atk + cc.lvl * d.grow) * (1 + (E.companionPct || 0));
+    if (sk.k === 'heal') { if (G.p.hp / S.maxHp < .65) { const h = Player.heal(S.maxHp * sk.m * (1 + (E.healPct || 0))); bump('compHeals'); this.txt(P.x, P.y - 30, '+' + h, '#6cc07a'); c.cd = sk.cd * 2.2; return; } }
+    else if (sk.k === 'shield') { if (P.shield <= 0) { P.shield = Math.round(S.maxHp * sk.m * (1 + cc.lvl * .01)); c.cd = sk.cd * 2.2; this.txt(P.x, P.y - 40, '🛡', '#8fb7e8'); return; } }
+    const t = this.nearest(c.x, c.y, 330); if (!t) { c.cd = .4; return; }
+    if (sk.k === 'poison' && chance(.3)) { for (const e of A.enemies) if (Math.hypot(e.x - c.x, e.y - c.y) < 260) this.applyE(e, 'poison', 4, 1); c.cd = sk.cd * 2; return; }
+    const hits = sk.k === 'dmg' && chance(.35) ? sk.hits || 1 : 1; for (let i = 0; i < hits; i++) { const raw = atk * (hits > 1 ? sk.m : .6) * rnd(.9, 1.1) * mitig(t.def, t.lvl) * (1 - clamp(t.res.phys || 0, -1, .9)); this.txt(t.x, t.y - 20, '' + Math.round(raw), '#8fb7e8'); t.hp -= raw; bump('dmgDealt', Math.round(raw)); if (t.hp <= 0) { this.kill(t, { by: 'ally' }); break; } else this.phase(t); }
+    c.cd = 1.3;
+  },
+
+  /* --- boucle, rendu, entrées --- */
+  frame(now) {
+    if (!this.on) return; const dt = Math.min(.05, (now - this.last) / 1000); this.last = now;
+    try { this.update(dt); this.render(); } catch (e) { console.error(e); }
+    this.raf = requestAnimationFrame(t => this.frame(t));
+  },
+  resize() { const cv = this.cv = $id('ar-cv'); if (!cv) return; const r = cv.parentElement.getBoundingClientRect(); cv.width = Math.max(320, Math.floor(r.width)); cv.height = Math.max(240, Math.floor(r.height)); this.ctx = cv.getContext && cv.getContext('2d'); },
+  render() {
+    const c = this.ctx, A = this.A; if (!c) return; const cv = this.cv, W = cv.width, H = cv.height, P = A.P, S = A.S;
+    const cx = clamp(P.x - W / 2, 0, Math.max(0, this.W - W)), cy = clamp(P.y - H / 2, 0, Math.max(0, this.H - H));
+    const gcol = { plaines: '#3f6b3a', foret: '#2c5a34', marais: '#2e3d3a', montagne: '#5b4c45', cimetiere: '#3a3646', abysses: '#2c3f66' }[A.Z.id] || '#3a5a3a';
+    c.fillStyle = gcol; c.fillRect(0, 0, W, H); c.save(); c.translate(-cx, -cy);
+    c.fillStyle = 'rgba(255,255,255,.04)'; for (let x = 0; x < this.W; x += 120) c.fillRect(x, 0, 2, this.H); for (let y = 0; y < this.H; y += 120) c.fillRect(0, y, this.W, 2);
+    c.textAlign = 'center'; c.textBaseline = 'middle'; const ob = { plaines: '🪨', foret: '🌲', marais: '🌿', montagne: '⛰️', cimetiere: '🪦', abysses: '💎' }[A.Z.id];
+    c.font = '34px serif'; for (const o of A.obst) c.fillText(ob, o.x, o.y);
+    for (const ch of A.chests) { c.font = '26px serif'; c.fillText(ch.open ? '📭' : '🎁', ch.x, ch.y); }
+    for (const t of A.teles) { const k = t.t / t.dur; c.fillStyle = `rgba(220,50,50,${.18 + .3 * k})`; c.beginPath(); c.arc(t.x, t.y, t.r, 0, 7); c.fill(); c.fillStyle = 'rgba(220,50,50,.5)'; c.beginPath(); c.arc(t.x, t.y, t.r * k, 0, 7); c.fill(); if (t.kind === 'bolt') { c.strokeStyle = 'rgba(255,120,60,.6)'; c.beginPath(); c.moveTo(t.e.x, t.e.y); c.lineTo(t.e.x + Math.cos(t.a) * 300, t.e.y + Math.sin(t.a) * 300); c.stroke(); } }
+    for (const l of A.loot) { c.font = '20px serif'; c.fillText(l.k === 'item' ? l.it.ico : l.k === 'mat' ? MATS[l.id][1] : CONS[l.id].i, l.x, l.y); if (l.k === 'item') { c.strokeStyle = RARITIES[l.it.r].c; c.lineWidth = 2; c.beginPath(); c.arc(l.x, l.y, 14, 0, 7); c.stroke(); } }
+    for (const e of A.enemies) {
+      c.font = (e.r * 2.1) + 'px serif'; c.globalAlpha = e.flash > 0 ? .5 : 1; c.fillText(e.i, e.x, e.y); c.globalAlpha = 1;
+      c.fillStyle = '#000'; c.fillRect(e.x - e.r, e.y - e.r - 12, e.r * 2, 5); c.fillStyle = e.tier === 'boss' ? '#e06070' : e.tier === 'elite' ? '#a463f2' : '#c8505a'; c.fillRect(e.x - e.r, e.y - e.r - 12, e.r * 2 * clamp(e.hp / e.maxHp, 0, 1), 5);
+      c.font = '10px sans-serif'; c.fillStyle = '#fff'; c.fillText('niv.' + e.lvl, e.x, e.y - e.r - 18); const stt = Object.keys(e.st).map(k => STATUS[k].i).join(''); if (stt) c.fillText(stt, e.x, e.y + e.r + 10);
+    }
+    for (const al of A.allies) { c.font = '20px serif'; c.fillText('💀', al.x, al.y); }
+    if (A.comp) { c.font = '24px serif'; c.fillText(COMPS[G.active].i, A.comp.x, A.comp.y); }
+    if (P.shield > 0) { c.strokeStyle = 'rgba(140,180,255,.7)'; c.lineWidth = 3; c.beginPath(); c.arc(P.x, P.y, 22, 0, 7); c.stroke(); }
+    if (P.swing > 0) { c.strokeStyle = 'rgba(255,255,255,.8)'; c.lineWidth = 5; c.beginPath(); c.arc(P.x, P.y, 70, P.face - 1.1, P.face + 1.1); c.stroke(); }
+    c.globalAlpha = P.inv > 0 ? .45 : 1; c.font = '30px serif'; c.fillText(PORTRAITS[G.p.portrait], P.x, P.y); c.globalAlpha = 1;
+    for (const s of A.shots) { c.fillStyle = s.spell ? '#4fb3a5' : '#f1d58a'; c.beginPath(); c.arc(s.x, s.y, s.r, 0, 7); c.fill(); }
+    for (const s of A.eshots) { c.fillStyle = '#ff7a3c'; c.beginPath(); c.arc(s.x, s.y, s.r, 0, 7); c.fill(); }
+    for (const f of A.fx) { if (f.ring) { c.strokeStyle = f.col; c.lineWidth = 4; c.globalAlpha = f.life * 2; c.beginPath(); c.arc(f.x, f.y, f.ring * (1 - f.life), 0, 7); c.stroke(); c.globalAlpha = 1; } else { c.font = 'bold 15px sans-serif'; c.fillStyle = f.col; c.globalAlpha = clamp(f.life * 1.6, 0, 1); c.fillText(f.t, f.x, f.y); c.globalAlpha = 1; } }
+    c.restore();
+    if (A.night) { const g = c.createRadialGradient(P.x - cx, P.y - cy, 80, P.x - cx, P.y - cy, 330); g.addColorStop(0, 'rgba(5,5,20,0)'); g.addColorStop(1, 'rgba(5,5,20,.72)'); c.fillStyle = g; c.fillRect(0, 0, W, H); }
+    // HUD
+    const bar = (x, y, w, v, col, txt) => { c.fillStyle = '#000a'; c.fillRect(x, y, w, 14); c.fillStyle = col; c.fillRect(x, y, w * clamp(v, 0, 1), 14); c.fillStyle = '#fff'; c.font = '11px sans-serif'; c.textAlign = 'left'; c.fillText(txt, x + 4, y + 8); c.textAlign = 'center'; };
+    bar(10, 10, 190, G.p.hp / S.maxHp, '#c8505a', `❤ ${fmt(G.p.hp)}/${fmt(S.maxHp)}`); bar(10, 28, 190, G.p.mp / S.maxMp, '#3f9a8e', `✦ ${fmt(G.p.mp)}/${fmt(S.maxMp)}`);
+    bar(10, 46, 190, G.p.lvl >= MAXLVL ? 1 : G.p.xp / xpNeeded(G.p.lvl), '#c9a24e', `Niv. ${G.p.lvl}`);
+    c.font = '13px sans-serif'; c.fillStyle = '#fff'; c.textAlign = 'right'; c.fillText(`${A.Z.i} ${A.Z.n} · ${A.kills} vaincus · 🪙 ${fmt(G.p.gold)}`, W - 10, 18); c.textAlign = 'center';
+    A.spells.forEach((id, i) => { const x = W / 2 - 110 + i * 74, y = H - 70; c.fillStyle = '#000a'; c.fillRect(x, y, 66, 56); c.font = '22px serif'; c.fillStyle = '#fff'; c.fillText(SK[id].ico, x + 33, y + 22); c.font = '10px sans-serif'; c.fillText(`[${i + 1}] ${Skills.cost(id)}✦`, x + 33, y + 44); if (P.spCd[i] > 0) { c.fillStyle = '#000b'; c.fillRect(x, y, 66, 56 * clamp(P.spCd[i] / 4, 0, 1)); } });
+    if (A.msgT > 0) { c.font = 'bold 16px sans-serif'; c.fillStyle = '#f1d58a'; c.fillText(A.msg, W / 2, 40); }
+  },
+  bind() {
+    this._kd = e => { if (!this.on) return; const k = e.key.toLowerCase(); if (k === 'escape') { this.stop(); return; } this.A.keys[k === ' ' ? 'space' : k] = true; if (k === ' ' || k === 'shift') { e.preventDefault(); this.roll(); } else if (k === '1' || k === '2' || k === '3') this.cast(+k - 1); else if (k === 'e') this.potion(); if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault(); };
+    this._ku = e => { if (this.on) this.A.keys[e.key.toLowerCase() === ' ' ? 'space' : e.key.toLowerCase()] = false; };
+    this._rs = () => this.resize();
+    window.addEventListener('keydown', this._kd); window.addEventListener('keyup', this._ku); window.addEventListener('resize', this._rs);
+  },
+  unbind() { window.removeEventListener('keydown', this._kd); window.removeEventListener('keyup', this._ku); window.removeEventListener('resize', this._rs); }
+};
+
+/* Commandes tactiles / souris */
+UI.arcadeScreen = function () {
+  $id('screen-arcade').innerHTML = `<canvas id="ar-cv"></canvas><div class="ar-ui" id="ar-ui">
+    <div class="ar-joy" id="ar-joy"><i id="ar-knob"></i></div>
+    <div class="ar-btns"><button data-ar="attack" class="arb big">⚔</button><button data-ar="roll" class="arb">💨</button><button data-ar="s0" class="arb">1</button><button data-ar="s1" class="arb">2</button><button data-ar="s2" class="arb">3</button><button data-ar="pot" class="arb">🧪</button></div>
+    <button class="btn sm ar-exit" data-act="arcadeExit">Quitter (Échap)</button><div class="ar-hint">ZQSD / flèches : bouger · J ou clic : attaquer · Espace : roulade · 1-2-3 : sorts · E : potion</div></div>`;
+  const joy = $id('ar-joy'), knob = $id('ar-knob'); let jid = null;
+  const setJ = e => { const r = joy.getBoundingClientRect(), x = (e.clientX - r.left - r.width / 2) / (r.width / 2), y = (e.clientY - r.top - r.height / 2) / (r.height / 2), l = Math.hypot(x, y) || 1, k = Math.min(1, l); const A = Arcade.A; if (A) { A.joy.x = x / l * k; A.joy.y = y / l * k; } knob.style.transform = `translate(${x / l * k * 34}px,${y / l * k * 34}px)`; };
+  joy.addEventListener('pointerdown', e => { jid = e.pointerId; joy.setPointerCapture(jid); setJ(e); }); joy.addEventListener('pointermove', e => { if (e.pointerId === jid) setJ(e); });
+  const endJ = e => { if (e.pointerId === jid) { jid = null; if (Arcade.A) { Arcade.A.joy.x = 0; Arcade.A.joy.y = 0; } knob.style.transform = ''; } }; joy.addEventListener('pointerup', endJ); joy.addEventListener('pointercancel', endJ);
+  for (const b of $id('ar-ui').querySelectorAll('[data-ar]')) {
+    const k = b.dataset.ar;
+    b.addEventListener('pointerdown', e => { e.preventDefault(); const A = Arcade.A; if (!A) return; if (k === 'attack') A.btn.attack = true; else if (k === 'roll') Arcade.roll(); else if (k === 'pot') Arcade.potion(); else Arcade.cast(+k[1]); });
+    const up = () => { if (k === 'attack' && Arcade.A) Arcade.A.btn.attack = false; }; b.addEventListener('pointerup', up); b.addEventListener('pointerleave', up); b.addEventListener('pointercancel', up);
+  }
+  const cv = $id('ar-cv');
+  cv.addEventListener('pointerdown', e => { const A = Arcade.A; if (!A) return; const r = cv.getBoundingClientRect(); A.aim = Math.atan2(e.clientY - r.top - r.height / 2, e.clientX - r.left - r.width / 2); A.btn.attack = true; });
+  cv.addEventListener('pointerup', () => { if (Arcade.A) { Arcade.A.btn.attack = false; Arcade.A.aim = null; } });
+};
+Object.assign(Act, {
+  launchArcade(d) { const zid = d.z || U.zone; UI.arcadeScreen(); Arcade.start(zid); },
+  arcadeExit() { Arcade.stop(); }
+});
+
+/* =====================================================================
+   BRANCHEMENT DES MODES DE JEU DANS L'INTERFACE
+   ===================================================================== */
+UI.show = function (s) { U.screen = s; for (const id of ['title', 'create', 'game', 'combat', 'dungeon', 'mine', 'arcade']) { const el = $id('screen-' + id); if (el) el.classList.toggle('hidden', id !== s); } };
+TABS.splice(1, 0, ['modes', '🎮', 'Modes']);
+
+/* ----- Hub des 5 modes ----- */
+V.modes = () => {
+  const Z = ZONE(U.zone), m = G.mine || { tier: 1 };
+  const card = (ico, n, d, st, act, extra = '') => `<div class="panel mode"><div class="mico">${ico}</div><h3>${n}</h3><p>${d}</p><small>${st}</small><div class="row wrap"><button class="btn primary" data-act="${act}" ${extra}>Jouer</button></div></div>`;
+  return `<h2>Modes de jeu</h2><p><small>Cinq façons de jouer, un seul héros : niveau, équipement, traits et sauvegarde sont partagés.</small></p>
+  <div class="grid modes">
+    ${card('⚔️', 'RPG au tour par tour', 'Combats stratégiques : ennemis qui annoncent leurs attaques, compétences, défense, objets, Finisseur.', `Zone : ${Z.i} ${Z.n} — onglet Explorer`, 'goExplore')}
+    ${card('🏰', 'Donjons explorables', 'Une carte de salles à embranchements : combat, élite, coffre, piège, événement, feu de camp (checkpoint), boss.', Dungeon.D ? '<b class="good">Un donjon est en cours</b>' : 'Choisissez un donjon dans la zone', 'goDungeon')}
+    ${card('🐾', 'Aventure en temps réel', 'Vue de dessus façon RPG d’action : déplacez-vous, roulez, lancez vos sorts et esquivez les zones rouges.', `Zone : ${Z.i} ${Z.n} (niv. ${Z.min}–${Z.max})`, 'launchArcade', `data-z="${U.zone}"`)}
+    ${card('⛏️', 'Minage', 'Creusez, gérez votre énergie, évitez la lave, remontez vos minerais et améliorez votre pioche.', `Pioche rang ${m.tier} — record de profondeur : ${val('mineDepth')}`, 'launchMine')}
+    ${card('🔨', 'Forge', 'Mini-jeu de timing : la qualité de vos frappes détermine la rareté et les statistiques. Plans appris en démontant des objets.', `${Object.keys(G.recipes || {}).length} plan(s) connu(s)`, 'goCraft')}
+  </div>`;
+};
+Object.assign(Act, {
+  goExplore() { U.tab = 'explore'; UI.renderGame(); }, goCraft() { U.tab = 'craft'; U.craftTab = 'forge'; UI.renderGame(); },
+  goDungeon() { if (Dungeon.D) Hooks.dungeonMap(); else { U.tab = 'explore'; UI.renderGame(); UI.toast('Choisissez un donjon et une difficulté.'); } },
+  dungResume() { Hooks.dungeonMap(); }
+});
+
+/* ----- Explorer : reprise de donjon + aventure temps réel ----- */
+const _vExplore = V.explore;
+V.explore = () => {
+  let h = _vExplore();
+  h = h.replace('<button class="btn primary big" data-act="explore">Explorer la zone</button>', `<div class="row wrap"><button class="btn primary big" data-act="explore">Explorer (tour par tour)</button><button class="btn big" data-act="launchArcade" data-z="${U.zone}">🐾 Aventure en temps réel</button></div>`);
+  if (Dungeon.D) h = h.replace('<h2>Exploration</h2>', `<h2>Exploration</h2><div class="panel"><b>🏰 Donjon en cours : ${esc(DUNGEON(Dungeon.D.id).n)}</b> <button class="btn primary" data-act="dungResume">Reprendre</button></div>`);
+  return h;
+};
+Act.dungeon = function (d) {
+  const dg = DUNGEON(d.id), B = BOSSES[dg.boss];
+  if (Dungeon.D) return UI.toast('Un donjon est déjà en cours.', 'bad');
+  if (!confirm(`Entrer dans ${dg.n} (${DIFFS[+d.d].n}) ?\nCarte de salles à choisir pas à pas, sans fuite possible. Boss : ${B.n} (niv. ${B.lvl + DIFFS[+d.d].off}).`)) return;
+  Dungeon.start(d.id, +d.d);
+};
+
+/* ----- Donjon : écran carte ----- */
+Object.assign(Hooks, {
+  dungeonMap() { if (Dungeon.D) { UI.show('dungeon'); UI.renderDungeon(); } else { UI.show('game'); UI.renderGame(); } },
+  dungeonEvent() { Act.showEv(); },
+  dungeonNegotiate() { UI.modal(`<h3>Le Roi Gobelin</h3><p>Grimgut vous fixe. Le petit gobelin que vous avez libéré se glisse entre vous : « Roi, ami est bon… ». Le Roi hésite.</p><div class="row wrap"><button class="btn primary" data-act="negotiate">Négocier (chemin pacifique)</button><button class="btn" data-act="dungGo">Combattre</button></div>`); }
+});
+UI.renderDungeon = function () {
+  const D = Dungeon.D; if (!D) { UI.show('game'); UI.renderGame(); return; }
+  const d = DUNGEON(D.id), S = Stats.get(), reach = new Set(Dungeon.reachable().map(n => n.id)), cnt = {}; D.nodes.forEach(n => cnt[n.l] = (cnt[n.l] || 0) + 1);
+  const pos = n => [(n.l + .5) / 5 * 100, (n.i + .5) / cnt[n.l] * 100];
+  const lines = D.nodes.flatMap(a => a.next.map(bid => { const b = Dungeon.node(bid), [x1, y1] = pos(a), [x2, y2] = pos(b), vis = Dungeon.visible(a) && Dungeon.visible(b); return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="${a.done && (b.done || reach.has(b.id)) ? 'ln on' : vis ? 'ln' : 'ln dim'}"/>`; })).join('');
+  const nodes = D.nodes.map(n => { const [x, y] = pos(n), vis = Dungeon.visible(n), r = reach.has(n.id); return `<button class="dn ${n.done ? 'done' : ''} ${r ? 'reach' : ''} ${D.at === n.id ? 'cur' : ''} k-${vis ? n.k : 'x'}" style="left:${x}%;top:${y}%" data-act="dnode" data-id="${n.id}" ${r ? '' : 'disabled'} aria-label="${vis ? DN_NAME[n.k] : 'Salle inconnue'}" data-tip="${vis ? DN_NAME[n.k] : 'Salle inconnue'}">${vis ? DN_ICON[n.k] : '❔'}</button>`; }).join('');
+  const comp = Object.keys(CONS).filter(k => ['potion_hp', 'potion_hp2', 'potion_mp'].includes(k) && (G.cons[k] || 0) > 0);
+  $id('screen-dungeon').innerHTML = `<div class="dwrap">
+    <div class="c-top"><b>🏰 ${esc(d.n)} — ${DIFFS[D.diff].n} (niv. ${Dungeon.lvl()})</b><button class="btn sm danger" data-act="dungQuit">Abandonner</button></div>
+    <div class="mbars">${bar(G.p.hp, S.maxHp, 'hp', `❤ ${fmt(G.p.hp)} / ${fmt(S.maxHp)}`)}${bar(G.p.mp, S.maxMp, 'mp', `✦ ${fmt(G.p.mp)} / ${fmt(S.maxMp)}`)}</div>
+    <div class="dmap"><svg viewBox="0 0 100 100" preserveAspectRatio="none" class="dsvg">${lines}</svg>${nodes}<span class="dent">🚪</span></div>
+    <div class="row wrap legend">${Object.keys(DN_ICON).map(k => `<span>${DN_ICON[k]} ${DN_NAME[k]}</span>`).join('')}<span>❔ inconnue</span></div>
+    <div class="row wrap">${comp.map(k => `<button class="btn sm" data-act="dPotion" data-id="${k}">${CONS[k].i} ${CONS[k].n} ×${G.cons[k]}</button>`).join('')}${D.cp >= 0 ? '<small class="good">🔥 Checkpoint actif : en cas de défaite, vous reprenez au dernier feu de camp.</small>' : '<small>Pas de checkpoint : une défaite met fin au donjon. Cherchez un feu de camp 🔥.</small>'}</div>
+    <div class="exlog">${D.log.map(l => `<div>${esc(l)}</div>`).join('')}</div></div>`;
+};
+Object.assign(Act, {
+  dnode(d) { Dungeon.enter(+d.id); },
+  dPotion(d) { const D = Dungeon.D; if (!D || (G.cons[d.id] || 0) < 1) return; const S = Stats.get(), E = Stats.sum(), c = CONS[d.id]; G.cons[d.id]--;
+    if (d.id === 'potion_mp') Player.restoreMp(S.maxMp * c.f * (1 + (E.potionPct || 0))); else Player.heal(S.maxHp * c.f * (1 + (E.potionPct || 0) + (E.healPct || 0)));
+    bump('potions'); D.potions++; Game.sync(); UI.renderDungeon(); },
+  dungQuit() { if (!Dungeon.D || confirm('Abandonner le donjon ? La progression de la carte sera perdue.')) { UI.closeModal(); Dungeon.leave(); UI.show('game'); UI.renderGame(); } },
+  dungGo() { UI.closeModal(); const D = Dungeon.D; if (D) Dungeon.fight(Dungeon.node(D.pend)); },
+  negotiate() { UI.closeModal(); Dungeon.negotiate(); },
+  dEvDone() { UI.closeModal(); const f = U.pendingFight; U.pendingFight = null; Dungeon.afterEvent(f || null); }
+});
+Act.evChoice = function (d) {
+  const r = Narr.choose(U.ev, +d.i); if (!r) return; U.exLog.push(r.txt);
+  const nxt = U.dungEv ? 'dEvDone' : (r.fight ? 'evFight' : 'closeModal');
+  UI.modal(`<h3>${NARR.find(e => e.id === U.ev).n}</h3><p>${r.txt}</p>${r.lines.length ? `<ul class="res">${r.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}<button class="btn primary" data-act="${nxt}">Continuer</button>`);
+  U.pendingFight = r.fight || null;
+};
+Act.endCombat = function () {
+  UI.closeModal(); $id('modal').dataset.res = '0'; U.screen = 'game'; UI.show('game'); Combat.finish();
+  if (U.returnTo === 'mine' && G.mine && G.mine.run && !Dungeon.D) { U.returnTo = null; UI.show('mine'); UI.renderMine('Le combat est terminé.'); return; }
+  U.returnTo = null; if (U.screen === 'game') UI.renderGame();
+};
+
+/* ----- Forge : mini-jeu + plans ----- */
+Object.assign(Act, {
+  forge() { Forge.start({ slot: U.forgeSlot, q: U.forgeQ }); },
+  forgeAuto() { const it = Craft.finishForge({ slot: U.forgeSlot, q: U.forgeQ }, 50); if (it) UI.toast(`Forgé (auto) : ${it.name} (${RARITIES[it.r].n})`, it.r >= 3 ? 'trait' : 'good'); else UI.toast('Ressources insuffisantes.', 'bad'); },
+  forgePlan(d) { Forge.start({ key: d.k }); },
+  forgeHit() { Forge.hit(); }, forgeCancel() { Forge.cancel(); }
+});
+document.addEventListener('keydown', e => { if (e.key === ' ' && Forge.st && !Forge.st.done) { e.preventDefault(); Forge.hit(); } });
+V.craft = () => {
+  const matsP = `<div class="panel"><h3>Matériaux</h3><div class="mats">${Object.keys(MATS).map(k => `<span>${MATS[k][1]} ${MATS[k][0]} <b>${G.mats[k] || 0}</b></span>`).join('')}</div></div>`;
+  const nPlans = Object.keys(G.recipes || {}).length;
+  const tabs = `<div class="row wrap filters">${[['forge', 'Forger'], ['plans', `Plans (${nPlans})`], ['upg', 'Améliorer'], ['alch', 'Alchimie']].map(([k, n]) => `<button class="btn sm ${U.craftTab === k ? 'primary' : ''}" data-act="craftTab" data-t="${k}">${n}</button>`).join('')}</div>`;
+  const mt = m => Object.keys(m).map(k => `<span class="${(G.mats[k] || 0) >= m[k] ? 'ok' : 'ko'}">${MATS[k][1]} ${m[k]}</span>`).join(' ');
+  let body = '';
+  if (U.craftTab === 'forge') {
+    const c = Craft.forgeCost(U.forgeSlot, U.forgeQ), can = G.p.gold >= c.gold && Mats.has(c.mats);
+    body = `<div class="panel"><h3>Forger un équipement</h3><div class="row wrap">${Object.keys(ITEM_BASES).map(s => `<button class="btn sm ${U.forgeSlot === s ? 'primary' : ''}" data-act="forgeSlot" data-s="${s}">${TYPE_NAME[s]}</button>`).join('')}</div>
+      <div class="row wrap">${QUAL.map((q, i) => `<button class="btn sm ${U.forgeQ === i ? 'primary' : ''}" data-act="forgeQ" data-q="${i}">${q.n}</button>`).join('')}</div>
+      <p>Coût : ${fmt(c.gold)} or · ${mt(c.mats)}</p><p><small>Mini-jeu : 3 frappes à timing. Un bon score augmente les chances de rareté et les statistiques (jusqu’à +20 %), un score parfait ajoute un bonus. « Auto » = score moyen.</small></p>
+      <div class="row wrap"><button class="btn primary" data-act="forge" ${can ? '' : 'disabled'}>🔨 Forger (mini-jeu)</button><button class="btn" data-act="forgeAuto" ${can ? '' : 'disabled'}>Forger (auto)</button></div></div>`;
+  } else if (U.craftTab === 'plans') {
+    const keys = Object.keys(G.recipes || {}).map(k => Catalog.byKey(k)).filter(Boolean).sort((a, b) => b.r - a.r || a.lv - b.lv);
+    body = `<div class="panel"><h3>Plans de fabrication</h3><p><small>Démonter un objet nommé du catalogue vous apprend son plan : vous pouvez ensuite le refabriquer avec le mini-jeu de forge.</small></p>${keys.map(e => { const c = Craft.namedCost(e.key), can = G.p.gold >= c.gold && Mats.has(c.mats); return `<div class="recipe"><span class="${rcls(e.r)}"><b>${esc(e.n)}</b> <small>${RARITIES[e.r].n} · niv. ${e.lv} · ${e.cat ? CAT_NAME[e.cat] : TYPE_NAME[e.slot]}</small></span><span>${fmt(c.gold)} 🪙 ${mt(c.mats)} <button class="btn sm primary" data-act="forgePlan" data-k="${e.key}" ${can ? '' : 'disabled'}>Forger</button></span></div>`; }).join('') || '<em>Aucun plan connu. Démontez des objets nommés (inventaire › Démonter).</em>'}</div>`;
+  } else if (U.craftTab === 'upg') {
+    const all = [...Object.values(G.eq).filter(Boolean), ...G.inv].sort((a, b) => b.r - a.r), it = Inv.find(U.upSel), c = it && it.up < 10 ? Craft.upgCost(it) : null;
+    body = `<div class="panel"><h3>Améliorer</h3><div class="itemgrid">${all.map(i => itemCard(i, 'upSel')).join('') || '<em>Aucun objet.</em>'}</div></div>
+      <div class="panel">${it ? `<h3 class="${rcls(it.r)}">${esc(it.name)} +${it.up}</h3><ul class="statl">${statLines(it.st)}</ul>${it.up >= 10 ? '<p>Niveau maximal.</p>' : `<p>Réussite : <b>${Craft.upgRate(it)} %</b>${it.up >= 5 ? ' · <span class="bad">risque de perdre un niveau en cas d’échec</span>' : ''}</p><p>Coût : ${fmt(c.gold)} or · ${mt(c.mats)}</p><p><small>Bonus spéciaux aux niveaux +3, +6 et +9.</small></p><button class="btn primary" data-act="upgrade" ${G.p.gold >= c.gold && Mats.has(c.mats) ? '' : 'disabled'}>Améliorer en +${it.up + 1}</button>`}` : '<p><em>Choisissez un objet.</em></p>'}</div>`;
+  } else body = `<div class="panel"><h3>Alchimie</h3>${Object.keys(RECIPES).map(k => `<div class="recipe"><span>${CONS[k].i} <b>${CONS[k].n}</b> <small>(${G.cons[k] || 0}) — ${CONS[k].d}</small></span><span>${mt(RECIPES[k])} <button class="btn sm" data-act="brew" data-id="${k}" ${Mats.has(RECIPES[k]) ? '' : 'disabled'}>Préparer</button></span></div>`).join('')}</div>`;
+  return `<h2>Artisanat</h2><p><small>Besoin de matériaux ? Récoltez en <b>explorant</b>, en <b>combattant</b> ou dans la <b>mine</b> (onglet Modes).</small></p>${matsP}${tabs}${body}`;
+};
+
+/* ----- Traits et succès des nouveaux modes ----- */
+[['tx_arc1', 'Danseur du carnage', 'combat', 2, 'Deux cents ennemis vaincus en temps réel.', [g_('arcadeKills', 200, 'ennemis vaincus en temps réel')], { spdFlat: 2, atkPct: .02 }],
+ ['tx_arc2', 'Roulade parfaite', 'defense', 2, 'Soixante attaques évitées par une roulade.', [g_('rollDodges', 60, 'attaques évitées en roulant')], { dodgeFlat: 3 }],
+ ['tx_arc3', 'Chasseur en mouvement', 'exploration', 2, 'Une heure passée à courir le monde.', [g_('arcadeSeconds', 3600, 'secondes d’aventure en temps réel')], { spdFlat: 2, xpPct: .02 }],
+ ['tx_min1', 'Mineur acharné', 'exploration', 1, 'Cinq cents blocs brisés.', [g_('mined', 500, 'blocs minés')], { upgBonus: .04, defPct: .02 }],
+ ['tx_min2', 'Plongeur des profondeurs', 'exploration', 3, 'Rien ne vous arrête sous la terre.', [g_('mineDepth', 30, 'profondeur atteinte')], { sresFlat: 6, hpPct: .03 }],
+ ['tx_min3', 'Roi du sac', 'economie', 2, 'Vingt-cinq remontées chargées.', [g_('mineDeliveries', 25, 'dépôts à la surface')], { goldPct: .04 }],
+ ['tx_min4', 'Veine chanceuse', 'exploration', 2, 'Dix coffres déterrés.', [g_('mineChests', 10, 'coffres minés')], { lootLuck: .05 }],
+ ['tx_for1', 'Frappe parfaite', 'artisanat', 3, 'Trois forges parfaites.', [g_('forgePerfect', 3, 'forges avec un score parfait')], { upgBonus: .06, critDmg: .05 }],
+ ['tx_for2', 'Forgeron inspiré', 'artisanat', 2, 'Vingt forges au mini-jeu.', [g_('forges', 20, 'forges réalisées')], { upgBonus: .05 }],
+ ['tx_for3', 'Collectionneur de plans', 'artisanat', 3, 'Dix plans appris.', [g_('plans', 10, 'plans appris')], { goldPct: .03, upgBonus: .03 }],
+ ['tx_dun1', 'Cartographe de salles', 'donjons', 2, 'Cent salles de donjon explorées.', [g_('dungeonNodes', 100, 'salles de donjon explorées')], { xpPct: .03 }],
+ ['tx_dun2', 'Désamorceur', 'donjons', 2, 'Vingt pièges désamorcés.', [g_('trapsDisarmed', 20, 'pièges désamorcés')], { dodgeFlat: 2, sresFlat: 4 }],
+ ['tx_dun3', 'Veilleur du feu de camp', 'donjons', 2, 'Quinze feux de camp.', [g_('campfires', 15, 'repos au feu de camp')], { regenPost: .03, hpPct: .02 }]
+].forEach(a => N_(...a));
+ACHS.push(
+  { id: 'a_arc', n: 'Premiers pas en temps réel', g: [{ c: 'arcadeKills', n: 25 }], gold: 150 }, { id: 'a_mine', n: 'Premier filon', g: [{ c: 'mined', n: 50 }], gold: 100 },
+  { id: 'a_deep', n: 'Plus bas encore', g: [{ c: 'mineDepth', n: 20 }], gold: 400 }, { id: 'a_forge', n: 'Apprenti forgeron', g: [{ c: 'forges', n: 5 }], gold: 150 },
+  { id: 'a_dn5', n: 'Explorateur de salles', g: [{ c: 'dungeonNodes', n: 30 }], gold: 250 }
+);
