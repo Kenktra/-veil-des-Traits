@@ -219,3 +219,14 @@ body.no-anim *, body.no-anim *::before { animation: none !important; transition:
   .enemy { width: 46%; } .enemy.boss { width: 100%; } .e-ico { font-size: 1.8rem; }
   .c-actions { grid-template-columns: repeat(3, 1fr); } .grid.traits { grid-template-columns: 1fr; } .quest { flex-direction: column; align-items: stretch; }
 }
+
+/* ----- Inventaire avancé (étape 4) ----- */
+.item .badges { position: absolute; top: 3px; right: 5px; font-size: .75rem; display: flex; gap: 3px; align-items: center; }
+.item .new { font-style: normal; background: var(--gold); color: #1b1608; border-radius: 4px; padding: 0 4px; font-size: .62rem; font-weight: 700; }
+.item .chk { font-style: normal; color: #1b1608; background: var(--green); border-radius: 50%; width: 16px; height: 16px; display: inline-grid; place-items: center; font-size: .7rem; }
+.item.picked { background: #26402f; outline: 2px solid var(--green); }
+.selbar { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: .5rem .8rem; margin: .5rem 0; position: sticky; top: 0; z-index: 3; }
+.gold-t { color: var(--gold2); }
+select, input[type=search] { background: var(--bg2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: .4em .6em; font: inherit; }
+input[type=search] { flex: 1; min-width: 180px; }
+.rbtn { border-color: var(--rc); color: var(--rc); }

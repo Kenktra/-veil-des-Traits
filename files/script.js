@@ -426,6 +426,138 @@ const Paragon = {
   reset() { const p = G.p.par; let n = 0; for (const k in p.alloc) n += p.alloc[k]; p.pts += n; p.alloc = {}; }
 };
 
+/* ---------- 2c. ARSENAL : catalogue d'objets nommés (étape 4) ----------
+   Chaque entrée a une clé stable (key), une rareté fixe, un niveau minimal, un effet éventuel et une description.
+   Les statistiques sont calculées d'après le niveau d'objet au moment du drop : un objet de rareté élevée mais
+   de bas niveau reste donc dépassé par un objet de haut niveau.
+   gate : 'boss' = ne tombe que sur un boss ; 'none' = jamais en butin aléatoire (événements/quêtes futurs). */
+Object.assign(FX, {
+  spirit: { n: 'Essence liée', d: '+2 mana par tour, +6 % dégâts de compétence', eff: { mpRegen: 2, skillPct: .06 } },
+  pact: { n: 'Pacte d’âme', d: '+25 % invocations, +3 mana par tour', eff: { summonPct: .25, mpRegen: 3 } },
+  chrono: { n: 'Fil du temps', d: '8 % de tour supplémentaire', eff: { extraTurn: .08 } },
+  curse_atk: { n: 'Soif maudite', d: 'Maudite : +18 % attaque, −10 % PV max', eff: { atkPct: .18, hpPct: -.10 } },
+  curse_vamp: { n: 'Appétit maudit', d: 'Maudite : 10 % de vol de vie, −30 % de soins reçus', eff: { lifesteal: .10, healPct: -.30 } },
+  curse_crit: { n: 'Marque du bourreau', d: 'Maudite : +50 % dégâts critiques, −10 % défense', eff: { critDmg: .5, defPct: -.10 } }
+});
+const CAT_ENTRIES = [];
+const CE = (key, n, slot, cat, lv, r, fx, d, o = {}) => CAT_ENTRIES.push(Object.assign({ key, n, slot, cat, lv, r, fx: fx || [], d, force: [] }, o));
+const WP = (key, n, cat, lv, r, fx, d, o) => CE('w_' + key, n, 'weapon', cat, lv, r, fx, d, o);
+
+/* Armes : 64 */
+WP('epee_recrue', 'Épée de recrue', 'sword', 1, 0, [], 'Forgée en série pour les nouvelles recrues d’Aldra.');
+WP('lame_garde', 'Lame de la Garde', 'sword', 6, 1, [], 'L’insigne de la Garde est gravé sur sa garde.', { force: ['str'] });
+WP('epee_nord', 'Épée longue de Kaldheim', 'sword', 12, 2, ['m_guard'], 'Un acier froid, forgé pour les hivers du Nord.', { force: ['crit'] });
+WP('aube_brisee', 'Aube-Brisée', 'sword', 22, 3, ['m_vamp'], 'Brisée à l’aube d’une bataille oubliée, puis reforgée.');
+WP('serment_argent', 'Serment d’Argent', 'sword', 35, 4, ['bulwark'], 'Elle protège ceux qui ont prêté serment.', { force: ['end'] });
+WP('lame_vide', 'Lame du Vide', 'sword', 70, 5, ['execution'], 'Elle ne reflète rien. Elle ne manque rien.');
+WP('espadon_rouille', 'Espadon rouillé', 'greatsword', 3, 0, [], 'Lourd, mal équilibré, mais il tranche encore.');
+WP('pourfendeuse', 'Pourfendeuse', 'greatsword', 14, 2, [], 'Taillée pour fendre les boucliers.', { force: ['str'] });
+WP('tranche_montagne', 'Tranche-Montagne', 'greatsword', 30, 3, ['m_guard'], 'On dit qu’elle a ouvert un col dans la roche.');
+WP('lame_titans', 'Lame des Titans', 'greatsword', 60, 4, ['titan'], 'Trop grande pour un humain. Pas pour vous.');
+WP('surin', 'Surin de ruelle', 'dagger', 1, 0, [], 'Petit, discret, efficace.');
+WP('croc_vipere', 'Croc de vipère', 'dagger', 10, 2, ['m_vamp'], 'Une lame courbe au tranchant luisant.', { force: ['agi'] });
+WP('murmure_ombre', 'Murmure de l’Ombre', 'dagger', 24, 3, ['m_gold'], 'La Guilde des Ombres en offre à ses meilleurs.', { force: ['crit'] });
+WP('dent_nuit', 'Dent de la Nuit', 'dagger', 40, 4, ['venom'], 'Elle empoisonne ce qu’elle effleure.');
+WP('eclat_sans_nom', 'Éclat Sans Nom', 'dagger', 80, 6, ['timeworn'], 'Personne ne sait qui l’a forgée. Elle, si.', { gate: 'boss' });
+WP('katana_apprenti', 'Katana d’apprenti', 'katana', 5, 1, [], 'Fil net, poignée simple.', { force: ['crit'] });
+WP('katana_brume', 'Katana de la brume', 'katana', 18, 2, ['m_xp'], 'Un reflet de brume danse sur la lame.');
+WP('soleil_levant', 'Lame du Soleil Levant', 'katana', 38, 4, ['swift'], 'Elle sort du fourreau avant la pensée.');
+WP('kuro', 'Kuro-no-Tsuki', 'katana', 85, 5, ['tempest'], 'La lune noire n’éclaire que les duels.');
+WP('pique_milicien', 'Pique de milicien', 'spear', 2, 0, [], 'Longue, droite, sans fioritures.');
+WP('lance_cavalier', 'Lance du Cavalier', 'spear', 15, 2, [], 'Faite pour charger, pas pour reculer.', { force: ['spd'] });
+WP('perce_etoile', 'Perce-Étoile', 'spear', 33, 3, ['m_guard'], 'Sa pointe garde un éclat d’astre.');
+WP('pointe_aurore', 'Pointe-d’Aurore', 'spear', 65, 4, ['burner'], 'Elle brûle d’une lumière dorée.');
+WP('hachette', 'Hachette de bûcheron', 'axe', 1, 0, [], 'Elle tranche mieux le bois que les os. Mais.');
+WP('hache_clans', 'Hache des clans', 'axe', 11, 2, [], 'Les clans du Nord la transmettent de père en fille.', { force: ['str'] });
+WP('hache_berserker', 'Hache du Berserker', 'axe', 28, 3, ['m_vamp'], 'Plus on est blessé, plus elle semble légère.');
+WP('mange_cranes', 'Mange-Crânes', 'axe', 55, 4, ['bleeder'], 'Ses encoches comptent les vaincus.');
+WP('maillet', 'Maillet de forgeron', 'hammer', 2, 0, [], 'Fait pour la forge, tolère la guerre.');
+WP('marteau_gardien', 'Marteau du Gardien', 'hammer', 16, 2, [], 'Il résonne comme une cloche.', { force: ['end'] });
+WP('ecrase_montagnes', 'Écrase-Montagnes', 'hammer', 36, 4, ['froster'], 'Chaque coup fait trembler le sol.');
+WP('tonnerre_kaldheim', 'Tonnerre de Kaldheim', 'hammer', 75, 5, ['godslayer'], 'Le tonnerre lui-même s’incline.');
+WP('arc_chasseur', 'Arc de chasseur', 'bow', 1, 0, [], 'Simple et fiable, comme son maître.');
+WP('arc_ilvane', 'Arc long d’Ilvane', 'bow', 9, 2, [], 'Taillé dans un bois vivant.', { force: ['agi'] });
+WP('souffle_sylve', 'Souffle de la Sylve', 'bow', 27, 3, ['m_xp'], 'La corde chante comme le vent.');
+WP('arc_aube_pale', 'Arc de l’Aube Pâle', 'bow', 50, 4, ['lucky'], 'Ses flèches trouvent toujours un chemin.');
+WP('arbalete_garde', 'Arbalète de garde', 'crossbow', 4, 1, [], 'Standard de la Garde de la Couronne.');
+WP('arbalete_repetition', 'Arbalète à répétition', 'crossbow', 20, 3, ['m_gold'], 'Mécanisme d’ingénieur, cadence soutenue.', { force: ['spd'] });
+WP('brise_rempart', 'Brise-Rempart', 'crossbow', 45, 4, ['bleeder'], 'Ses carreaux percent la pierre.');
+WP('baton_novice', 'Bâton de novice', 'staff', 1, 0, [], 'Premier bâton de bien des mages.');
+WP('baton_brume', 'Bâton de la Brume', 'staff', 10, 2, ['m_xp'], 'Un brouillard léger l’enveloppe.', { force: ['int'] });
+WP('baton_cercle', 'Bâton du Cercle', 'staff', 25, 3, ['m_gold'], 'Emblème du Cercle Arcanique.', { force: ['mp'] });
+WP('sceptre_tempete', 'Sceptre de la Tempête', 'staff', 42, 4, ['arcane'], 'Des éclairs courent le long du bois.');
+WP('axis_mundi', 'Axis Mundi', 'staff', 90, 5, ['tempest'], 'L’axe du monde, en miniature.');
+WP('grimoire_elime', 'Grimoire élimé', 'tome', 2, 0, [], 'Les pages se détachent, les sorts non.');
+WP('codex_cercle', 'Codex du Cercle', 'tome', 13, 2, [], 'Annoté par trois générations d’apprentis.', { force: ['int'] });
+WP('livre_ombres', 'Livre des Ombres', 'tome', 30, 3, ['m_vamp'], 'Il murmure quand on ne le lit pas.');
+WP('chronique_morts', 'Chronique des Morts', 'tome', 48, 4, ['vampire'], 'Chaque page est un nom.');
+WP('faucille', 'Faucille de moissonneur', 'scythe', 6, 1, [], 'Pas faite pour la guerre. Pas encore.');
+WP('faux_fossoyeur', 'Faux du Fossoyeur', 'scythe', 24, 3, ['m_vamp'], 'Elle sent la terre fraîche.', { force: ['int'] });
+WP('moissonneuse', 'Moissonneuse d’Âmes', 'scythe', 62, 5, ['soulreaper'], 'Elle ne coupe pas le corps.');
+WP('poings_bois', 'Poings de bois', 'fist', 1, 0, [], 'Des gantelets d’entraînement de dojo.');
+WP('gantelets_moine', 'Gantelets de moine', 'fist', 8, 2, [], 'Lestés, polis par la méditation.', { force: ['agi'] });
+WP('poings_dragon', 'Poings du Dragon Ascendant', 'fist', 44, 4, ['swift'], 'Le dragon s’éveille à chaque coup.');
+WP('arquebuse', 'Arquebuse de contrebandier', 'gun', 7, 1, [], 'Bruyante, imprécise, mais terrifiante.');
+WP('fusil_runique', 'Fusil runique', 'gun', 26, 3, ['m_gold'], 'Des runes gravées dans le canon.', { force: ['int'] });
+WP('canon_zahar', 'Canon de Zahar', 'gun', 52, 4, ['burner'], 'Artisanat des maîtres-fondeurs de Zahar.');
+WP('lame_spectrale', 'Lame spectrale', 'sword', 20, 3, ['spirit'], 'Invoquée : elle n’existe que tant que vous la tenez.', { kind: 'invoquée' });
+WP('baton_esprit', 'Bâton de l’Esprit Lié', 'staff', 45, 4, ['pact'], 'Invoquée : un esprit y est lié par un pacte.', { kind: 'invoquée' });
+WP('soif_sang', 'Épée Soif-de-Sang', 'sword', 30, 4, ['curse_atk'], 'Maudite : elle exige du sang.', { kind: 'maudite' });
+WP('faux_penitent', 'Faux du Pénitent', 'scythe', 40, 4, ['curse_vamp'], 'Maudite : elle se nourrit des vivants.', { kind: 'maudite' });
+WP('hache_bourreau', 'Hache du Bourreau', 'axe', 52, 4, ['curse_crit'], 'Maudite : la sentence est toujours la même.', { kind: 'maudite' });
+WP('fragment_devoreur', 'Fragment du Dévoreur', 'greatsword', 100, 6, ['devourer'], 'Un éclat de la faim primordiale.', { kind: 'secrète', gate: 'boss' });
+WP('horloge_brisee', 'Horloge Brisée', 'wand', 120, 6, ['timeworn', 'chrono'], 'Le temps s’y est arrêté, puis s’est replié.', { kind: 'secrète', gate: 'boss' });
+WP('lame_eveil', 'Lame d’Éveil', 'katana', 150, 6, ['eveil_fx'], 'Elle répond à ceux dont les actes ont tout changé.', { kind: 'secrète', gate: 'none' });
+
+/* Ensembles : 4 × 5 pièces, bonus à 2 et 4 pièces portées */
+const SETS = [
+  { id: 'gardien', n: 'Gardien d’Aldra', r: 3, lv: 20, names: ['Heaume', 'Cuirasse', 'Gantelets', 'Grèves', 'Sabatons'], bi: [0, 0, 0, 0, 0], force: ['end', 'def'],
+    b: { 2: { defPct: .05, hpPct: .04 }, 4: { dmgTakenPct: -.05, defendBonus: .10 } }, d: 'La panoplie des gardiens de la Couronne.' },
+  { id: 'ombre', n: 'Lames de l’Ombre', r: 3, lv: 28, names: ['Capuche', 'Cuirasse légère', 'Gants', 'Pantalon', 'Sandales'], bi: [1, 2, 1, 1, 1], force: ['agi', 'dodge'],
+    b: { 2: { critFlat: 3, dodgeFlat: 3 }, 4: { critDmg: .2, dodgeFlat: 5 } }, d: 'Tissée dans l’ombre pour ne laisser aucune trace.' },
+  { id: 'tisse', n: 'Tisse-Arcanes', r: 4, lv: 40, names: ['Couronne', 'Robe', 'Gants', 'Pantalon', 'Sandales'], bi: [2, 1, 1, 1, 1], force: ['int', 'mp'],
+    b: { 2: { mpPct: .10, skillPct: .06 }, 4: { skillPct: .12, mpRegen: 3 } }, d: 'Chaque fil est une rune, chaque rune un sort.' },
+  { id: 'braise', n: 'Cœur de Braise', r: 4, lv: 55, names: ['Casque', 'Plastron', 'Gantelets', 'Jambières', 'Bottes'], bi: [0, 0, 0, 0, 0], force: ['str', 'atk'],
+    b: { 2: { atkPct: .05, resFire: .15 }, 4: { hitBurn: .20, atkPct: .06 } }, d: 'Forgée à même la lave des Montagnes de Cendre.' }
+];
+const SET_SLOTS = ['head', 'chest', 'hands', 'legs', 'feet'];
+for (const s of SETS) s.names.forEach((nm, i) => CE(`a_${s.id}_${SET_SLOTS[i]}`, `${nm} ${s.n === 'Gardien d’Aldra' ? 'du Gardien' : s.n === 'Lames de l’Ombre' ? 'de l’Ombre' : s.n === 'Tisse-Arcanes' ? 'Tisse-Arcanes' : 'de Braise'}`, SET_SLOTS[i], null, s.lv, s.r, [], s.d, { set: s.id, bi: s.bi[i], force: s.force }));
+
+/* Boucliers, anneaux, amulettes, capes, reliques : 20 */
+CE('o_targe', 'Targe de bois', 'off', 'shield', 1, 0, [], 'Elle encaisse. Parfois.');
+CE('o_bouclier_garde', 'Bouclier du Garde', 'off', 'shield', 12, 2, [], 'Marqué du blason de la Couronne.', { force: ['end'] });
+CE('o_rempart_kaldheim', 'Rempart de Kaldheim', 'off', 'shield', 35, 4, ['bulwark'], 'Les clans l’ont porté contre les géants.');
+CE('o_egide_aurore', 'Égide de l’Aurore', 'off', 'shield', 70, 5, ['titan'], 'Elle brille avant le premier coup.');
+CE('o_orbe_cercle', 'Orbe du Cercle', 'off', 'orb', 20, 3, ['m_xp'], 'Une sphère de savoir comprimé.', { force: ['int'] });
+CE('r_cuivre', 'Anneau de cuivre', 'acc', null, 1, 0, [], 'Un simple anneau, mais sincère.', { bi: 0 });
+CE('r_pillard', 'Anneau du Pillard', 'acc', null, 14, 2, [], 'Pris à un pillard qui n’en avait plus l’usage.', { bi: 0, force: ['crit', 'str'] });
+CE('r_sceau_couronne', 'Sceau de la Couronne', 'acc', null, 30, 3, ['m_guard'], 'Un sceau officiel, rarement porté hors des cérémonies.', { bi: 0 });
+CE('r_fortune', 'Anneau de Fortune', 'acc', null, 45, 4, ['lucky'], 'Le hasard vous doit une faveur.', { bi: 0 });
+CE('r_neant', 'Anneau du Néant', 'acc', null, 100, 6, ['voidheart'], 'Il bat comme un cœur qui n’est pas le vôtre.', { bi: 0, gate: 'boss', kind: 'secrète' });
+CE('m_bois', 'Pendentif de bois', 'acc', null, 3, 0, [], 'Sculpté par un enfant. Précieux, pourtant.', { bi: 1 });
+CE('m_cercle', 'Amulette du Cercle', 'acc', null, 22, 3, ['m_xp'], 'Elle vibre près des sources de magie.', { bi: 1, force: ['int'] });
+CE('m_sylve', 'Cœur de Sylve', 'acc', null, 38, 4, ['flow'], 'Un cœur de bois qui bat doucement.', { bi: 1 });
+CE('m_phenix', 'Larme de Phénix', 'acc', null, 80, 5, ['phoenix'], 'Elle brûle sans jamais s’éteindre.', { bi: 1 });
+CE('c_voyage', 'Cape de voyage', 'acc', null, 2, 0, [], 'Chaude, usée, fidèle.', { bi: 2 });
+CE('c_rodeur', 'Cape du Rôdeur', 'acc', null, 18, 2, [], 'Elle se fond dans les sous-bois.', { bi: 2, force: ['dodge'] });
+CE('c_nuit', 'Manteau de Nuit', 'acc', null, 42, 4, ['swift'], 'Tissé dans le silence.', { bi: 2 });
+CE('x_premier_roi', 'Relique du Premier Roi', 'acc', null, 60, 4, ['scholar'], 'Un sceau porté par le premier souverain d’Aldra.', { bi: 1 });
+CE('x_dernier_matin', 'Relique du Dernier Matin', 'acc', null, 95, 5, ['godslayer'], 'Le dernier lever de soleil, scellé dans le cristal.', { bi: 1 });
+CE('x_idole_eveil', 'Idole de l’Éveil', 'acc', null, 120, 6, ['eveil_fx'], 'Elle ne s’active que pour un héros accompli.', { bi: 1, kind: 'secrète', gate: 'none' });
+
+const Catalog = {
+  byKey(k) { return CAT_ENTRIES.find(e => e.key === k); },
+  pick(ilvl, r, slot, o) {
+    if (r === 0 && !chance(.25)) return null;
+    const c = CAT_ENTRIES.filter(e => e.r === r && e.slot === slot && e.lv <= ilvl + 3 && (!o.cat || e.cat === o.cat) && (e.gate === undefined || (e.gate === 'boss' && o.boss)));
+    return c.length && chance(r >= 4 ? .6 : .35) ? pick(c) : null;
+  },
+  make(e, ilvl) {
+    const it = genItem({ ilvl: Math.max(ilvl, e.lv), r: e.r, slot: e.slot, cat: e.cat || undefined, name: e.n, fx: e.fx, force: e.force, bi: e.bi, noCat: true });
+    it.key = e.key; it.desc = e.d; if (e.set) it.set = e.set; if (e.kind) it.kind = e.kind; return it;
+  }
+};
+
 /* ---------- 3. ÉTAT & SAUVEGARDE ---------- */
 // Hooks : points de contact avec l'interface (remplacés dans la partie 10)
 const Hooks = {
@@ -436,10 +568,10 @@ let G = null;
 
 function newState() {
   return {
-    v: 2, created: Date.now(), saved: 0, playTime: 0,
+    v: 3, created: Date.now(), saved: 0, playTime: 0,
     settings: { anim: true },
     p: { name: '', portrait: 0, cls: 'guerrier', style: 'offensif', lvl: 1, xp: 0, gold: 60, hp: 1, mp: 1, base: { str: 0, int: 0, agi: 0, end: 0 }, pts: 0, sp: 0, sex: 'x', origin: 'aldra', bg: 'orphelin', diff: 'normal', alloc: { str: 0, int: 0, agi: 0, end: 0 }, par: { lvl: 0, xp: 0, pts: 0, alloc: {} }, classChanges: 0 },
-    inv: [], eq: {}, cons: { potion_hp: 3, potion_mp: 1 }, mats: {},
+    inv: [], stash: [], eq: {}, cons: { potion_hp: 3, potion_mp: 1 }, mats: {},
     tr: {}, sk: {}, aug: {}, q: {}, comp: {}, active: null,
     zones: {}, bosses: {}, dung: {}, ach: {}, titles: { recrue: true }, title: 'recrue',
     rep: { couronne: 0, cercle: 0, ombres: 0, sylve: 0 },
@@ -470,7 +602,7 @@ function val(k) {
 }
 
 const Save = {
-  KEY: 'eveil_traits_save', VER: 2,
+  KEY: 'eveil_traits_save', VER: 3,
   exists() { try { return !!localStorage.getItem(this.KEY); } catch (e) { return false; } },
   peek() { try { const d = JSON.parse(localStorage.getItem(this.KEY)); return d && d.p ? d : null; } catch (e) { return null; } },
   read() {
@@ -511,6 +643,8 @@ const Stats = {
     L.push({ src: 'Style · ' + st.n, eff: st.eff });
     const og = ORIGINS.find(o => o.id === G.p.origin), bg = BACKGROUNDS.find(b => b.id === G.p.bg);
     if (og) L.push({ src: 'Origine · ' + og.n, eff: og.eff || {} }); if (bg) L.push({ src: 'Histoire · ' + bg.n, eff: bg.eff || {} });
+    const cnt = {}; for (const sl of EQ_SLOTS) { const it = G.eq[sl]; if (it && it.set) cnt[it.set] = (cnt[it.set] || 0) + 1; }
+    for (const s of SETS) for (const th in s.b) if ((cnt[s.id] || 0) >= +th) L.push({ src: `Ensemble · ${s.n} (${th} pièces)`, eff: s.b[th] });
     const pe = Paragon.eff(); if (pe) L.push({ src: 'Paragon ' + G.p.par.lvl, eff: pe });
     for (const t of TRAITS) if (G.tr[t.id] && G.tr[t.id].u) L.push({ src: 'Trait · ' + t.n, eff: t.eff });
     for (const s of SYNERGIES) if (s.ids.every(id => Traits.has(id))) L.push({ src: 'Synergie · ' + s.n, eff: s.eff });
@@ -568,10 +702,11 @@ function genItem(o = {}) {
   const ilvl = Math.max(1, Math.round(o.ilvl || 1));
   const r = o.r !== undefined ? o.r : rollRarity(o.luck || 0, o.minR || 0), R = RARITIES[r];
   const slot = o.slot || pick(Object.keys(ITEM_BASES)), list = ITEM_BASES[slot];
-  const b = (o.cat && list.find(x => x.cat === o.cat)) || pick(list);
+  if (!o.name && !o.fx && !o.noCat) { const ce = Catalog.pick(ilvl, r, slot, o); if (ce) return Catalog.make(ce, ilvl); }
+  const b = (o.bi !== undefined && list[o.bi]) || (o.cat && list.find(x => x.cat === o.cat)) || pick(list);
   const B = (4 + ilvl * 1.6) * R.m, st = {};
   for (const k in b.main) st[k] = Math.max(1, Math.round(B * b.main[k] * rnd(.92, 1.08)));
-  let n = R.aff + (slot === 'acc' ? 2 : 0), guard = 40; const cand = [...b.bias];
+  let n = R.aff + (slot === 'acc' ? 2 : 0), guard = 40; const cand = [...(o.force || []), ...b.bias];
   while (n > 0 && guard-- > 0) {
     const k = cand.length ? cand.shift() : pick(STAT_POOL);
     if (st[k] !== undefined) continue;
@@ -679,6 +814,68 @@ const Inv = {
     Player.gold(tot); Game.sync(); return { tot, n };
   }
 };
+
+/* ---------- 4b. INVENTAIRE AVANCÉ (étape 4) ----------
+   Protections : un objet verrouillé ou de quête n'est jamais vendu ni démonté ; les favoris sont exclus
+   des sélections automatiques ; les objets équipés ne sont pas dans l'inventaire donc ne peuvent pas être vendus. */
+const DISMANTLE = {
+  0: { ore: 1, hide: 1 }, 1: { ore: 2, hide: 1 }, 2: { ore: 3, hide: 2, crystal: 1 }, 3: { ore: 4, hide: 3, crystal: 2 },
+  4: { ore: 5, hide: 4, crystal: 3, star: 1 }, 5: { ore: 6, hide: 5, crystal: 4, star: 2 }, 6: { ore: 8, hide: 6, crystal: 6, star: 4 }
+};
+const SET_BY = id => SETS.find(s => s.id === id);
+Object.assign(Inv, {
+  STASH_MAX: 100, STASH_LVL: 15,
+  power(it) {
+    const w = { atk: 1, def: 1, mres: 1, hp: .2, mp: .1, str: 1.5, int: 1.5, agi: 1.5, end: 1.5, spd: 3, crit: 3, dodge: 3, prec: 2, pen: 3 };
+    let p = 0; for (const k in it.st) p += (it.st[k] || 0) * (w[k] || 1);
+    return Math.round(p + it.fx.length * it.ilvl * 2);
+  },
+  protectedItem(it) { return !!(it.lock || it.quest); },
+  add(it, src) {
+    if (G.inv.some(x => x.id === it.id)) return false; // jamais de doublon d'identifiant
+    if (G.inv.length >= this.MAX) {
+      const cand = G.inv.filter(x => !x.lock && !x.fav && !x.quest).sort((a, b) => a.r - b.r || a.val - b.val);
+      const worst = cand[0];
+      if (worst && worst.r <= it.r) { this.remove(worst.id); Player.gold(sellPrice(worst), 'neutral'); Hooks.toast(`Inventaire plein : ${worst.name} vendu automatiquement.`); }
+      else { Player.gold(sellPrice(it), 'neutral'); Hooks.toast('Inventaire plein : butin vendu automatiquement.'); return false; }
+    }
+    if (src !== 'shop') it.isNew = true;
+    G.inv.push(it);
+    if (src !== 'shop') { bump('itemsFound'); if (it.r >= 2) bump('rareDrops'); if (it.r >= 3) bump('epicFound'); if (it.r === 6) bump('secretFound'); }
+    return true;
+  },
+  pick(ids, from = G.inv) { const s = new Set(ids), seen = new Set(), out = []; for (const it of from) if (s.has(it.id) && !seen.has(it.id)) { seen.add(it.id); out.push(it); } return out; },
+  eligible(maxR, from = G.inv) { return from.filter(i => i.r <= maxR && !i.lock && !i.fav && !i.quest); },
+  total(items) { return items.reduce((s, i) => s + (this.protectedItem(i) ? 0 : sellPrice(i)), 0); },
+  sell(id) { const it = G.inv.find(x => x.id === id); if (!it || this.protectedItem(it)) return 0; return this.sellMany([id]).tot; },
+  sellMany(ids) {
+    const items = this.pick(ids), ok = items.filter(i => !this.protectedItem(i)); let tot = 0;
+    for (const it of ok) { this.remove(it.id); tot += sellPrice(it); bump('sold'); }
+    if (tot) Player.gold(tot); Game.sync();
+    return { n: ok.length, tot, skipped: items.length - ok.length };
+  },
+  sellBelow(maxR) { return this.sellMany(this.eligible(maxR).map(i => i.id)); },
+  dismantleMany(ids) {
+    const items = this.pick(ids).filter(i => !this.protectedItem(i)), mats = {};
+    for (const it of items) {
+      this.remove(it.id); bump('dismantled');
+      const t = DISMANTLE[it.r]; for (const k in t) { const n = t[k] + (it.up > 0 && k === 'ore' ? it.up : 0); mats[k] = (mats[k] || 0) + n; G.mats[k] = (G.mats[k] || 0) + n; }
+    }
+    Game.sync(); return { n: items.length, mats };
+  },
+  toggle(id, key) { const it = this.find(id) || G.stash.find(x => x.id === id); if (it) { it[key] = !it[key]; Game.sync(); } },
+  stashOpen() { return G.p.lvl >= this.STASH_LVL; },
+  deposit(ids) {
+    if (!this.stashOpen()) return 0; let n = 0;
+    for (const it of this.pick(ids)) { if (G.stash.length >= this.STASH_MAX) break; this.remove(it.id); G.stash.push(it); n++; }
+    Game.sync(); return n;
+  },
+  withdraw(ids) {
+    let n = 0;
+    for (const it of this.pick(ids, G.stash)) { if (G.inv.length >= this.MAX) break; G.stash.splice(G.stash.indexOf(it), 1); G.inv.push(it); n++; }
+    Game.sync(); return n;
+  }
+});
 
 /* ---------- 5. TRAITS / TITRES / SUCCÈS / QUÊTES ---------- */
 /* Un trait = objectifs (g) vérifiés par val(compteur) + effet passif réel (eff).
@@ -1369,7 +1566,7 @@ const Combat = {
       const tm = e.tier === 'boss' ? 6 : e.tier === 'elite' ? 2.5 : 1; let x = 12 * Math.pow(e.lvl, 1.3) * tm;
       if (G.p.lvl > e.lvl + 9) x *= .25; else if (G.p.lvl > e.lvl + 4) x *= .5;
       xp += x; gold += (6 + e.lvl * 3) * rnd(.7, 1.3) * (e.tier === 'boss' ? 8 : e.tier === 'elite' ? 2.5 : 1);
-      if (chance(e.tier === 'boss' ? 1 : e.tier === 'elite' ? .75 : .17)) items.push(genItem({ ilvl: e.lvl + (e.boss ? 2 : 0), luck: E.lootLuck || 0, minR: e.boss ? 2 : e.tier === 'elite' ? 1 : 0 }));
+      if (chance(e.tier === 'boss' ? 1 : e.tier === 'elite' ? .75 : .17)) items.push(genItem({ ilvl: e.lvl + (e.boss ? 2 : 0), luck: E.lootLuck || 0, minR: e.boss ? 2 : e.tier === 'elite' ? 1 : 0, boss: e.boss }));
       if (e.boss && G.bosses[e.tpl] !== true) { unique = bossUnique(e.tpl, e.lvl); items.push(unique); G.bosses[e.tpl] = true; }
       const pool = (z && z.mats.length ? z.mats : e.mats);
       if (pool.length && chance(e.tier === 'normal' ? .5 : 1)) { const k = pick(pool); mats[k] = (mats[k] || 0) + (e.tier === 'boss' ? rint(3, 5) : e.tier === 'elite' ? rint(2, 3) : rint(1, 2)); }
@@ -1741,7 +1938,7 @@ const Dungeon = {
     bump('dungeonsDone');
     const g = Math.round(B.lvl * 40 * df.rew * (peace ? .5 : 1) * (1 + (E.goldPct || 0))); Player.gold(g); lines.push(`+${fmt(g)} or`);
     const n = peace ? 1 : 1 + D.diff + (first ? 1 : 0);
-    for (let i = 0; i < n; i++) { const it = genItem({ ilvl: B.lvl + df.off + 2, minR: 2 + D.diff, luck: (E.lootLuck || 0) + .1 * D.diff }); Inv.add(it, 'drop'); lines.push(`Butin : ${it.name} (${RARITIES[it.r].n})`); }
+    for (let i = 0; i < n; i++) { const it = genItem({ ilvl: B.lvl + df.off + 2, minR: 2 + D.diff, luck: (E.lootLuck || 0) + .1 * D.diff, boss: true }); Inv.add(it, 'drop'); lines.push(`Butin : ${it.name} (${RARITIES[it.r].n})`); }
     addRep('couronne', 3 + D.diff * 2); if (peace) lines.push('Le Roi Gobelin se retire sans combattre. Grok souhaite vous suivre.');
     this.D = null; G.flags.dungeon = null; Game.sync();
     Hooks.dungeonDone({ name: d.n, diff: df.n, lines, peace });
@@ -1817,7 +2014,7 @@ const Craft = {
     if (G.flags.inCombat) return null; const c = this.forgeCost(slot, q);
     if (G.p.gold < c.gold || !Mats.has(c.mats)) return null;
     G.p.gold -= c.gold; Mats.take(c.mats); bump('goldSpent', c.gold);
-    const E = Stats.sum(), it = genItem({ ilvl: G.p.lvl + q, slot, luck: QUAL[q].luck + (E.upgBonus || 0) * 2, minR: QUAL[q].minR });
+    const E = Stats.sum(), it = genItem({ ilvl: G.p.lvl + q, slot, luck: QUAL[q].luck + (E.upgBonus || 0) * 2, minR: QUAL[q].minR, noCat: true });
     Inv.add(it, 'craft'); bump('crafted'); Game.sync(); return it;
   },
   upgCost(it) {
@@ -1872,7 +2069,7 @@ const Shop = {
 };
 
 /* ---------- 10. INTERFACE ---------- */
-const U = { screen: 'title', tab: 'town', zone: 'plaines', sel: null, invF: 'all', traitCat: 'all', craftTab: 'forge', shopTab: 'forge', cmenu: null, exLog: [], cr: { name: '', portrait: 0, sex: 'x', origin: 'aldra', bg: 'orphelin', diff: 'normal', cls: 'guerrier', style: 'offensif', weapon: 0 }, enc: null, ev: null, compMsg: {}, forgeSlot: 'weapon', forgeQ: 0, upSel: null, tipCache: {} };
+const U = { screen: 'title', tab: 'town', zone: 'plaines', sel: null, invF: 'all', traitCat: 'all', craftTab: 'forge', shopTab: 'forge', cmenu: null, exLog: [], cr: { name: '', portrait: 0, sex: 'x', origin: 'aldra', bg: 'orphelin', diff: 'normal', cls: 'guerrier', style: 'offensif', weapon: 0 }, enc: null, ev: null, compMsg: {}, forgeSlot: 'weapon', forgeQ: 0, upSel: null, tipCache: {}, invQ: '', invR: 'all', invS: 'rarity', invDir: 1, selMode: false, selSet: new Set(), invTab: 'bag', autoR: 1 };
 const $id = id => document.getElementById(id);
 const TABS = [['town', '🏰', 'Ville'], ['explore', '🧭', 'Explorer'], ['char', '👤', 'Héros'], ['inv', '🎒', 'Inventaire'], ['skills', '✨', 'Compétences'], ['traits', '🌟', 'Traits'], ['quests', '📜', 'Quêtes'], ['comp', '🤝', 'Compagnons'], ['craft', '🔨', 'Artisanat'], ['shop', '💰', 'Marché'], ['stats', '🏆', 'Succès'], ['rep', '👑', 'Renommée'], ['opts', '⚙️', 'Options']];
 const TRAIT_ICON = { combat: '⚔️', survie: '❤️', exploration: '🧭', equipement: '🛡️', social: '🤝', secret: '🌑', maudit: '☠️' };
@@ -1884,10 +2081,11 @@ const ring = (ratio, col, icon) => { const r = 26, c = 2 * Math.PI * r; return `
 
 function itemTip(it) {
   const R = RARITIES[it.r];
-  return `<b class="${rcls(it.r)}">${esc(it.name)}${it.up ? ' +' + it.up : ''}</b><br>${R.n} · ${it.cat ? CAT_NAME[it.cat] : TYPE_NAME[it.slot]} · niv. ${it.ilvl}<ul>${statLines(it.st)}</ul>${it.fx.map(f => `<div class="fx">★ ${FX[f].n} : ${FX[f].d}</div>`).join('')}<i>${esc(it.desc)}</i>`;
+  return `<b class="${rcls(it.r)}">${esc(it.name)}${it.up ? ' +' + it.up : ''}</b><br>${R.n} · ${it.cat ? CAT_NAME[it.cat] : TYPE_NAME[it.slot]} · niv. ${it.ilvl}<ul>${statLines(it.st)}</ul>${it.fx.map(f => `<div class="fx">★ ${FX[f].n} : ${FX[f].d}</div>`).join('')}${it.set ? `<div class="fx">◆ Ensemble ${SET_BY(it.set).n} : ${Object.keys(SET_BY(it.set).b).map(k => `${k} pièces — ${effText(SET_BY(it.set).b[k]).join(', ')}`).join(' | ')}</div>` : ''}${it.kind ? `<div class="fx">✦ Arme ${it.kind}</div>` : ''}<i>${esc(it.desc)}</i>`;
 }
 function itemCard(it, act, extra = '') {
-  return `<button class="item ${rcls(it.r)} ${U.sel === it.id ? 'sel' : ''}" data-act="${act}" data-id="${it.id}" data-tip="${esc(itemTip(it))}"><span class="ico">${it.ico}</span><span class="nm">${esc(it.name)}${it.up ? ' +' + it.up : ''}</span><small>niv. ${it.ilvl} · ${RARITIES[it.r].n}</small>${extra}</button>`;
+  const pk = U.selSet && U.selSet.has(it.id);
+  return `<button class="item ${rcls(it.r)} ${U.sel === it.id ? 'sel' : ''} ${pk ? 'picked' : ''}" data-act="${act}" data-id="${it.id}" data-tip="${esc(itemTip(it))}"><span class="badges">${it.lock ? '🔒' : ''}${it.fav ? '⭐' : ''}${it.isNew ? '<i class="new">NEW</i>' : ''}${pk ? '<i class="chk">✔</i>' : ''}</span><span class="ico">${it.ico}</span><span class="nm">${esc(it.name)}${it.up ? ' +' + it.up : ''}</span><small>niv. ${it.ilvl} · ${RARITIES[it.r].n}${it.set ? ' · ◆' : ''}</small>${extra}</button>`;
 }
 function compareHtml(it) {
   let slot = it.slot; if (slot === 'acc') slot = (!G.eq.acc1 || !G.eq.acc2) ? (!G.eq.acc1 ? 'acc1' : 'acc2') : (G.eq.acc1.r <= G.eq.acc2.r ? 'acc1' : 'acc2');
@@ -1952,7 +2150,7 @@ const UI = {
     $id('hud').innerHTML = `<div class="hud-id"><span class="portrait">${PORTRAITS[p.portrait]}</span><div><b>${esc(p.name)}</b><small>${CLASS(p.cls).n} · niv. ${p.lvl} · ${esc(ti ? ti.n : '')}</small></div></div>
       <div class="hud-bars">${bar(p.hp, S.maxHp, 'hp', `❤ ${fmt(p.hp)} / ${fmt(S.maxHp)}`)}${bar(p.mp, S.maxMp, 'mp', `✦ ${fmt(p.mp)} / ${fmt(S.maxMp)}`)}${bar(p.xp, p.lvl >= MAXLVL ? 1 : xpNeeded(p.lvl), 'xp', p.lvl >= MAXLVL ? 'Niveau max' : `XP ${fmt(p.xp)} / ${fmt(xpNeeded(p.lvl))}`)}</div>
       <div class="hud-gold" title="Or">🪙 ${fmt(p.gold)}</div>`;
-    const alerts = { char: G.p.pts > 0, skills: G.p.sp > 0, quests: QUESTS.some(q => Quests.status(q) === 'ready'), comp: Object.keys(COMPS).some(id => !(G.comp[id] && G.comp[id].rec) && Companions.can(id)) };
+    const alerts = { char: G.p.pts > 0, skills: G.p.sp > 0, inv: G.inv.some(i => i.isNew), quests: QUESTS.some(q => Quests.status(q) === 'ready'), comp: Object.keys(COMPS).some(id => !(G.comp[id] && G.comp[id].rec) && Companions.can(id)) };
     $id('nav').innerHTML = TABS.map(([id, ic, n]) => `<button class="${U.tab === id ? 'on' : ''}" data-act="tab" data-t="${id}" aria-label="${n}"><span>${ic}</span><em>${n}</em>${alerts[id] ? '<i class="dot"></i>' : ''}</button>`).join('');
     const v = $id('view'), st = v.scrollTop;
     v.innerHTML = (UI.views[U.tab] || UI.views.town)();
@@ -2083,20 +2281,54 @@ V.char = () => {
     <div class="panel"><h3>Sources de bonus actives</h3><div class="srcs">${E.map(s => { const t = effText(s.eff); return t.length ? `<div><b>${esc(s.src)}</b><small>${t.join(', ')}</small></div>` : ''; }).join('')}</div></div>`;
 };
 
+function invFiltered() {
+  const src = U.invTab === 'stash' ? G.stash : G.inv, q = U.invQ.trim().toLowerCase();
+  const key = { rarity: i => i.r * 1e6 + i.ilvl, level: i => i.ilvl, value: i => itemValue(i), power: i => Inv.power(i) }[U.invS];
+  return src.filter(i => (U.invF === 'all' || i.slot === U.invF) && (U.invR === 'all' || i.r === +U.invR) && (!q || i.name.toLowerCase().includes(q) || (i.cat && CAT_NAME[i.cat].toLowerCase().includes(q)) || (i.kind || '').includes(q)))
+    .sort((a, b) => U.invDir * (key(b) - key(a)));
+}
+function invGridHtml() {
+  const l = invFiltered(); return l.map(i => itemCard(i, 'invClick')).join('') || '<em>Aucun objet ne correspond.</em>';
+}
+function invBarHtml() {
+  const src = U.invTab === 'stash' ? G.stash : G.inv, sel = Inv.pick([...U.selSet], src), tot = Inv.total(sel), prot = sel.filter(i => Inv.protectedItem(i)).length;
+  return `<b>${sel.length}</b> sélectionné(s) · valeur de vente <b class="gold-t">🪙 ${fmt(tot)}</b>${prot ? ` <small class="bad">(${prot} verrouillé(s) ignoré(s))</small>` : ''}
+    <div class="row wrap"><button class="btn sm danger" data-act="sellSel" ${sel.length && U.invTab === 'bag' ? '' : 'disabled'}>Vendre la sélection</button><button class="btn sm" data-act="dismSel" ${sel.length && U.invTab === 'bag' ? '' : 'disabled'}>Démonter</button>
+    <button class="btn sm" data-act="${U.invTab === 'bag' ? 'stashSel' : 'unstashSel'}" ${sel.length && Inv.stashOpen() ? '' : 'disabled'}>${U.invTab === 'bag' ? 'Mettre au coffre' : 'Retirer du coffre'}</button>
+    <button class="btn sm" data-act="lockSel" ${sel.length ? '' : 'disabled'}>Verrouiller / déverrouiller</button><button class="btn sm" data-act="selNone" ${sel.length ? '' : 'disabled'}>Désélectionner tout</button></div>`;
+}
+UI.refreshInv = () => { const g = $id('invgrid'), b = $id('invbar'); if (!g || !b) { UI.renderGame(); return; } g.innerHTML = invGridHtml(); b.innerHTML = invBarHtml(); };
+
 V.inv = () => {
   const types = [['all', 'Tout'], ['weapon', 'Armes'], ['off', 'Secondaires'], ['head', 'Casques'], ['chest', 'Plastrons'], ['hands', 'Gants'], ['legs', 'Jambières'], ['feet', 'Bottes'], ['acc', 'Accessoires']];
-  const list = G.inv.filter(i => U.invF === 'all' || i.slot === U.invF).sort((a, b) => b.r - a.r || b.ilvl - a.ilvl);
-  const sel = Inv.find(U.sel), eqd = sel && Object.values(G.eq).some(x => x && x.id === sel.id);
-  let detail = '<p><em>Sélectionnez un objet pour voir ses détails et le comparer.</em></p>';
-  if (sel) detail = `<h3 class="${rcls(sel.r)}">${sel.ico} ${esc(sel.name)}${sel.up ? ' +' + sel.up : ''}</h3><small>${RARITIES[sel.r].n} · ${sel.cat ? CAT_NAME[sel.cat] : TYPE_NAME[sel.slot]} · niv. ${sel.ilvl}${sel.cat && MAGIC_CATS.includes(sel.cat) ? ' · dégâts magiques' : ''}</small>
-    <ul class="statl">${statLines(sel.st)}</ul>${sel.fx.map(f => `<div class="fx">★ <b>${FX[f].n}</b> — ${FX[f].d}</div>`).join('')}<p><i>${esc(sel.desc)}</i></p>${eqd ? '' : compareHtml(sel)}
-    <div class="row wrap">${eqd ? `<button class="btn" data-act="unequip" data-id="${sel.id}" ${G.flags.inCombat ? 'disabled' : ''}>Déséquiper</button>` : `<button class="btn primary" data-act="equip" data-id="${sel.id}">Équiper</button><button class="btn danger" data-act="sell" data-id="${sel.id}">Vendre (${fmt(sellPrice(sel))} or)</button>`}</div>`;
-  return `<h2>Inventaire <small>${G.inv.length}/${Inv.MAX}</small></h2><div class="grid two inv">
-    <div><div class="panel"><h3>Équipement</h3><div class="eqgrid">${EQ_SLOTS.map(s => { const it = G.eq[s]; return it ? `<button class="eqslot ${rcls(it.r)} ${U.sel === it.id ? 'sel' : ''}" data-act="select" data-id="${it.id}" data-tip="${esc(itemTip(it))}"><small>${SLOT_NAME[s]}</small><span>${it.ico} ${esc(it.name)}${it.up ? ' +' + it.up : ''}</span></button>` : `<div class="eqslot empty"><small>${SLOT_NAME[s]}</small><span>— vide —</span></div>`; }).join('')}</div></div>
-      <div class="panel">${detail}</div></div>
-    <div class="panel"><div class="row wrap filters">${types.map(([k, n]) => `<button class="btn sm ${U.invF === k ? 'primary' : ''}" data-act="invF" data-f="${k}">${n}</button>`).join('')}</div>
-      <div class="row wrap"><button class="btn sm" data-act="sellBelow" data-r="0">Vendre les communs</button><button class="btn sm" data-act="sellBelow" data-r="1">Vendre communs + peu communs</button></div>
-      <div class="itemgrid">${list.map(i => itemCard(i, 'select')).join('') || '<em>Aucun objet.</em>'}</div></div></div>`;
+  const sel = Inv.find(U.sel) || G.stash.find(x => x.id === U.sel), eqd = sel && Object.values(G.eq).some(x => x && x.id === sel.id), inStash = sel && G.stash.includes(sel);
+  let detail = '<p><em>Cliquez sur un objet pour voir ses détails et le comparer. Activez le « mode sélection » pour cocher plusieurs objets.</em></p>';
+  if (sel) detail = `<h3 class="${rcls(sel.r)}">${sel.ico} ${esc(sel.name)}${sel.up ? ' +' + sel.up : ''} ${sel.lock ? '🔒' : ''}${sel.fav ? '⭐' : ''}</h3><small>${RARITIES[sel.r].n} · ${sel.cat ? CAT_NAME[sel.cat] : TYPE_NAME[sel.slot]} · niv. ${sel.ilvl}${sel.kind ? ' · ' + sel.kind : ''}${sel.cat && MAGIC_CATS.includes(sel.cat) ? ' · dégâts magiques' : ''} · puissance ${Inv.power(sel)}</small>
+    <ul class="statl">${statLines(sel.st)}</ul>${sel.fx.map(f => `<div class="fx">★ <b>${FX[f].n}</b> — ${FX[f].d}</div>`).join('')}
+    ${sel.set ? `<div class="fx">◆ <b>${SET_BY(sel.set).n}</b> : ${Object.keys(SET_BY(sel.set).b).map(k => `${k} pièces — ${effText(SET_BY(sel.set).b[k]).join(', ')}`).join(' | ')}</div>` : ''}
+    <p><i>${esc(sel.desc)}</i></p>${eqd || inStash ? '' : compareHtml(sel)}
+    <div class="row wrap">${eqd ? `<button class="btn" data-act="unequip" data-id="${sel.id}" ${G.flags.inCombat ? 'disabled' : ''}>Déséquiper</button>` : `${inStash ? `<button class="btn" data-act="unstashOne" data-id="${sel.id}">Retirer du coffre</button>` : `<button class="btn primary" data-act="equip" data-id="${sel.id}" ${G.flags.inCombat ? 'disabled' : ''}>Équiper</button>`}
+      <button class="btn" data-act="lockOne" data-id="${sel.id}">${sel.lock ? 'Déverrouiller' : 'Verrouiller'}</button><button class="btn" data-act="favOne" data-id="${sel.id}">${sel.fav ? 'Retirer des favoris' : 'Favori ⭐'}</button>
+      ${inStash ? '' : `<button class="btn danger" data-act="sell" data-id="${sel.id}" ${sel.lock ? 'disabled' : ''}>Vendre (${fmt(sellPrice(sel))} or)</button><button class="btn" data-act="dismOne" data-id="${sel.id}" ${sel.lock ? 'disabled' : ''}>Démonter</button>${Inv.stashOpen() ? `<button class="btn" data-act="stashOne" data-id="${sel.id}">Au coffre</button>` : ''}`}`}</div>`;
+  const setLines = SETS.map(s => { const n = Object.values(G.eq).filter(i => i && i.set === s.id).length; return n ? `<div class="syn ${n >= 2 ? 'on' : ''}"><b>◆ ${s.n} ${n}/5</b><small>${Object.keys(s.b).map(k => `${k} pièces : ${effText(s.b[k]).join(', ')}`).join(' | ')}</small></div>` : ''; }).join('');
+  const rar = [['all', 'Toutes raretés'], ...RARITIES.map((r, i) => [String(i), r.n])];
+  return `<h2>Inventaire <small>${G.inv.length}/${Inv.MAX} · coffre ${G.stash.length}/${Inv.STASH_MAX}</small></h2>
+  <div class="row wrap filters"><button class="btn sm ${U.invTab === 'bag' ? 'primary' : ''}" data-act="invTab" data-t="bag">Sac</button><button class="btn sm ${U.invTab === 'stash' ? 'primary' : ''}" data-act="invTab" data-t="stash">Coffre ${Inv.stashOpen() ? '' : `(niv. ${Inv.STASH_LVL})`}</button></div>
+  <div class="grid two inv"><div><div class="panel"><h3>Équipement</h3><div class="eqgrid">${EQ_SLOTS.map(s => { const it = G.eq[s]; return it ? `<button class="eqslot ${rcls(it.r)} ${U.sel === it.id ? 'sel' : ''}" data-act="select" data-id="${it.id}" data-tip="${esc(itemTip(it))}"><small>${SLOT_NAME[s]}</small><span>${it.ico} ${esc(it.name)}${it.up ? ' +' + it.up : ''}</span></button>` : `<div class="eqslot empty"><small>${SLOT_NAME[s]}</small><span>— vide —</span></div>`; }).join('')}</div>${setLines}</div>
+      <div class="panel" id="invdetail">${detail}</div></div>
+    <div class="panel">
+      ${U.invTab === 'stash' && !Inv.stashOpen() ? `<p>Le coffre se débloque au niveau ${Inv.STASH_LVL}.</p>` : `
+      <div class="row wrap"><input id="invq" data-bind="invq" type="search" placeholder="Rechercher (nom, type, invoquée, maudite…)" value="${esc(U.invQ)}" aria-label="Rechercher">
+        <select data-act="invS" aria-label="Trier par">${[['rarity', 'Rareté'], ['level', 'Niveau'], ['value', 'Valeur'], ['power', 'Puissance']].map(([k, n]) => `<option value="${k}" ${U.invS === k ? 'selected' : ''}>Tri : ${n}</option>`).join('')}</select>
+        <button class="btn sm" data-act="invDir">${U.invDir > 0 ? '↓ décroissant' : '↑ croissant'}</button></div>
+      <div class="row wrap filters">${types.map(([k, n]) => `<button class="btn sm ${U.invF === k ? 'primary' : ''}" data-act="invF" data-f="${k}">${n}</button>`).join('')}</div>
+      <div class="row wrap"><select data-act="invR" aria-label="Filtrer par rareté">${rar.map(([k, n]) => `<option value="${k}" ${String(U.invR) === k ? 'selected' : ''}>${n}</option>`).join('')}</select>
+        <label class="chk"><input type="checkbox" data-act="selMode" ${U.selMode ? 'checked' : ''}> Mode sélection</label>
+        <button class="btn sm" data-act="selAll">Tout sélectionner</button><button class="btn sm" data-act="selNone">Désélectionner tout</button></div>
+      <div class="row wrap"><small>Sélectionner par rareté :</small>${RARITIES.map((r, i) => `<button class="btn sm rbtn ${rcls(i)}" data-act="selRar" data-r="${i}">${r.n}</button>`).join('')}</div>
+      <div class="selbar" id="invbar">${invBarHtml()}</div>
+      ${U.invTab === 'bag' ? `<div class="row wrap"><span>Vente rapide des objets éligibles (non verrouillés, non favoris) jusqu’à</span><select data-act="autoR">${RARITIES.slice(0, 4).map((r, i) => `<option value="${i}" ${U.autoR === i ? 'selected' : ''}>${r.n}</option>`).join('')}</select><button class="btn sm danger" data-act="sellEligible">Vendre tous les objets éligibles</button></div>` : ''}
+      <div class="itemgrid" id="invgrid">${invGridHtml()}</div>`}</div></div>`;
 };
 
 V.skills = () => {
@@ -2213,10 +2445,27 @@ const Act = {
   rest() { const c = Explore.rest(); if (c) UI.toast(`Vous vous reposez (−${c} or). PV et mana restaurés.`, 'good'); },
   qAccept(d) { Quests.accept(d.id); }, qClaim(d) { const l = Quests.claim(d.id, d.c === undefined ? undefined : +d.c); if (l) UI.toast('Récompenses : ' + l.join(' · '), 'good'); },
   spend(d) { if (Player.spend(d.s)) Game.sync(); },
-  select(d) { U.sel = d.id; UI.renderGame(); }, equip(d) { Inv.equip(d.id); U.sel = d.id; UI.renderGame(); }, unequip(d) { const s = EQ_SLOTS.find(k => G.eq[k] && G.eq[k].id === d.id); if (s) Inv.unequip(s); },
-  sell(d) { const p = Inv.sell(d.id); U.sel = null; if (p) UI.toast(`Vendu pour ${fmt(p)} or.`); },
+  select(d) { U.sel = d.id; const it = Inv.find(d.id); if (it) it.isNew = false; UI.renderGame(); },
+  invClick(d) { if (U.selMode) Act.toggleSel(d); else { U.sel = d.id; const it = Inv.find(d.id) || G.stash.find(x => x.id === d.id); if (it) it.isNew = false; UI.renderGame(); } },
+  toggleSel(d) { if (U.selSet.has(d.id)) U.selSet.delete(d.id); else U.selSet.add(d.id); UI.refreshInv(); },
+  selMode(d, el) { U.selMode = el.checked; if (!U.selMode) U.selSet.clear(); UI.renderGame(); },
+  selAll() { U.selMode = true; const l = invFiltered().filter(i => !i.lock && !i.fav); U.selSet = new Set(l.map(i => i.id)); UI.renderGame(); UI.toast(`${l.length} objet(s) sélectionné(s) (verrouillés et favoris exclus).`); },
+  selNone() { U.selSet.clear(); UI.renderGame(); },
+  selRar(d) { U.selMode = true; invFiltered().filter(i => i.r === +d.r && !i.lock && !i.fav).forEach(i => U.selSet.add(i.id)); UI.renderGame(); },
+  sellSel() { const items = Inv.pick([...U.selSet]), ok = items.filter(i => !Inv.protectedItem(i)), tot = Inv.total(ok); if (!ok.length) return UI.toast('Rien à vendre dans la sélection.', 'bad'); if (!confirm(`Vendre ${ok.length} objet(s) pour ${fmt(tot)} or ?${items.length - ok.length ? `\n${items.length - ok.length} objet(s) verrouillé(s) ignoré(s).` : ''}`)) return; const r = Inv.sellMany(ok.map(i => i.id)); U.selSet.clear(); U.sel = null; UI.renderGame(); UI.toast(`${r.n} objet(s) vendu(s) pour ${fmt(r.tot)} or.`, 'good'); },
+  sellEligible() { const l = Inv.eligible(U.autoR), tot = Inv.total(l); if (!l.length) return UI.toast('Aucun objet éligible.', 'bad'); if (!confirm(`Vendre ${l.length} objet(s) éligible(s) (jusqu’à « ${RARITIES[U.autoR].n} », hors verrouillés et favoris) pour ${fmt(tot)} or ?`)) return; const r = Inv.sellMany(l.map(i => i.id)); U.selSet.clear(); U.sel = null; UI.renderGame(); UI.toast(`${r.n} objet(s) vendu(s) pour ${fmt(r.tot)} or.`, 'good'); },
+  dismSel() { const ok = Inv.pick([...U.selSet]).filter(i => !Inv.protectedItem(i)); if (!ok.length) return; if (!confirm(`Démonter ${ok.length} objet(s) en matériaux ? Cette action est définitive.`)) return; const r = Inv.dismantleMany(ok.map(i => i.id)); U.selSet.clear(); U.sel = null; UI.renderGame(); UI.toast(`${r.n} démonté(s) : ${Object.keys(r.mats).map(k => `${r.mats[k]} ${MATS[k][0]}`).join(', ')}.`, 'good'); },
+  dismOne(d) { const it = Inv.find(d.id); if (!it || it.lock || !confirm(`Démonter ${it.name} ?`)) return; const r = Inv.dismantleMany([d.id]); U.sel = null; UI.renderGame(); UI.toast(`Démonté : ${Object.keys(r.mats).map(k => `${r.mats[k]} ${MATS[k][0]}`).join(', ')}.`, 'good'); },
+  stashSel() { const n = Inv.deposit([...U.selSet]); U.selSet.clear(); UI.renderGame(); UI.toast(`${n} objet(s) mis au coffre.`); },
+  unstashSel() { const n = Inv.withdraw([...U.selSet]); U.selSet.clear(); UI.renderGame(); UI.toast(`${n} objet(s) retiré(s) du coffre.`); },
+  stashOne(d) { Inv.deposit([d.id]); U.sel = null; UI.renderGame(); }, unstashOne(d) { Inv.withdraw([d.id]); U.sel = null; UI.renderGame(); },
+  lockSel() { for (const it of Inv.pick([...U.selSet], U.invTab === 'stash' ? G.stash : G.inv)) it.lock = !it.lock; Game.sync(); },
+  lockOne(d) { Inv.toggle(d.id, 'lock'); }, favOne(d) { Inv.toggle(d.id, 'fav'); },
+  invTab(d) { U.invTab = d.t; U.selSet.clear(); U.sel = null; UI.renderGame(); }, invS(d, el) { U.invS = el.value; UI.renderGame(); }, invR(d, el) { U.invR = el.value; UI.renderGame(); },
+  invDir() { U.invDir = -U.invDir; UI.renderGame(); }, autoR(d, el) { U.autoR = +el.value; },
+  equip(d) { Inv.equip(d.id); U.sel = d.id; UI.renderGame(); }, unequip(d) { const s = EQ_SLOTS.find(k => G.eq[k] && G.eq[k].id === d.id); if (s) Inv.unequip(s); },
+  sell(d) { const it = Inv.find(d.id); if (!it || it.lock) return; if ((it.fav || it.r >= 4) && !confirm(`Vendre ${it.name} (${RARITIES[it.r].n}) pour ${fmt(sellPrice(it))} or ?`)) return; const p = Inv.sell(d.id); U.sel = null; U.selSet.delete(d.id); UI.renderGame(); if (p) UI.toast(`Vendu pour ${fmt(p)} or.`); },
   invF(d) { U.invF = d.f; UI.renderGame(); },
-  sellBelow(d) { const r = Inv.sellBelow(+d.r); UI.toast(`${r.n} objet(s) vendus (+${fmt(r.tot)} or).`); },
   learn(d) { Skills.learn(d.id); }, aug(d) { Skills.setAug(d.id, d.a); }, respec() { if (confirm('Réinitialiser toutes les compétences ? Les points sont rendus (coût en or).')) Skills.respec(); },
   traitCat(d) { U.traitCat = d.c; UI.renderGame(); },
   compRecruit(d) { Companions.recruit(d.id); }, compActive(d) { Companions.setActive(d.id); },
@@ -2288,8 +2537,8 @@ function initUI() {
     const el = e.target.closest('[data-act]'); if (!el || el.tagName === 'INPUT') return;
     if (el.disabled) return; const f = Act[el.dataset.act]; if (f) f(el.dataset, el);
   });
-  document.addEventListener('change', e => { const el = e.target.closest('input[data-act]'); if (el && Act[el.dataset.act]) Act[el.dataset.act](el.dataset, el); });
-  document.addEventListener('input', e => { if (e.target.dataset.bind === 'name') U.cr.name = e.target.value; });
+  document.addEventListener('change', e => { const el = e.target.closest('input[data-act], select[data-act]'); if (el && Act[el.dataset.act]) Act[el.dataset.act](el.dataset, el); });
+  document.addEventListener('input', e => { if (e.target.dataset.bind === 'name') U.cr.name = e.target.value; if (e.target.dataset.bind === 'invq') { U.invQ = e.target.value; UI.refreshInv(); } });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$id('modal').classList.contains('hidden') && !(Combat.C && Combat.C.over)) UI.closeModal(); });
   // Infobulles
   const tip = $id('tooltip');
